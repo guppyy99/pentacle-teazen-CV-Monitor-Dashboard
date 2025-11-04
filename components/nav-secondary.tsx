@@ -36,7 +36,7 @@ export function NavSecondary({
                 <SidebarMenuButton 
                   asChild
                   isActive={isActive}
-                  className={isActive ? "bg-muted font-medium" : ""}
+                  className={`transition-all duration-200 ease-in-out ${isActive ? "bg-muted font-medium" : ""}`}
                 >
                   <Link href={item.url}>
                     <item.icon />

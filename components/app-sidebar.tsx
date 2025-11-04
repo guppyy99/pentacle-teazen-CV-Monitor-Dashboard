@@ -182,18 +182,16 @@ const defaultData = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [data, setData] = useState(defaultData)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // 기본값으로 먼저 표시하고, 백그라운드에서 데이터 로드
     fetch("/api/config/sidebar")
       .then((res) => res.json())
       .then((config) => {
         setData(config)
-        setLoading(false)
       })
       .catch(() => {
-        setData(defaultData)
-        setLoading(false)
+        // 에러 시 기본값 유지 (이미 defaultData로 시작)
       })
   }, [])
 
@@ -203,16 +201,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       ...item,
       icon: iconMap[item.icon] || IconDashboard,
     }))
-  }
-
-  if (loading) {
-    return (
-      <Sidebar collapsible="offcanvas" {...props}>
-        <SidebarContent>
-          <div className="p-4 text-center">로딩 중...</div>
-        </SidebarContent>
-      </Sidebar>
-    )
   }
 
   const navMonitoringWithIcons = convertIconsToComponents(data.navMain)
