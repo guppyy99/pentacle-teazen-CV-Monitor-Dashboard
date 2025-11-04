@@ -1,0 +1,49 @@
+{
+  "cards": [
+    {
+      "id": "total-mentions",
+      "title": "총 언급량",
+      "value": "12,458",
+      "trend": {
+        "value": "+18.3%",
+        "direction": "up"
+      },
+      "description": "전월 대비 증가",
+      "subtitle": "최근 30일 기준"
+    },
+    {
+      "id": "sentiment-score",
+      "title": "긍정 평가",
+      "value": "78.4%",
+      "trend": {
+        "value": "+5.2%",
+        "direction": "up"
+      },
+      "description": "긍정 반응 증가",
+      "subtitle": "부정 21.6%"
+    },
+    {
+      "id": "engagement",
+      "title": "평균 참여도",
+      "value": "2,847",
+      "trend": {
+        "value": "+12.1%",
+        "direction": "up"
+      },
+      "description": "인터랙션 증가",
+      "subtitle": "좋아요+댓글+공유"
+    },
+    {
+      "id": "top-channel",
+      "title": "주요 채널",
+      "value": "인스타",
+      "trend": {
+        "value": "42.8%",
+        "direction": "up"
+      },
+      "description": "가장 많은 언급",
+      "subtitle": "블로그 28.5%, 카페 18.2%"
+    }
+  ]
+}
+
