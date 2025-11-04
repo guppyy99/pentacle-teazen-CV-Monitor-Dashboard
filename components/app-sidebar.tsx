@@ -27,6 +27,7 @@ import {
 
 import { NavDocuments } from "@/components/nav-documents"
 import { NavMain } from "@/components/nav-main"
+import { NavMonitoring } from "@/components/nav-monitoring"
 import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import {
@@ -214,7 +215,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     )
   }
 
-  const navMainWithIcons = convertIconsToComponents(data.navMain)
+  const navMonitoringWithIcons = convertIconsToComponents(data.navMain)
   const navSecondaryWithIcons = convertIconsToComponents(data.navSecondary)
   const documentsWithIcons = convertIconsToComponents(data.documents)
 
@@ -239,7 +240,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={navMainWithIcons} />
+        <NavMain />
+        <NavMonitoring items={navMonitoringWithIcons} />
         <NavDocuments items={documentsWithIcons} />
         <NavSecondary items={navSecondaryWithIcons} className="mt-auto" />
       </SidebarContent>
