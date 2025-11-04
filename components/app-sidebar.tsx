@@ -71,75 +71,50 @@ const defaultData = {
   },
   navMain: [
     {
-      title: "대시보드",
-      url: "#",
-      icon: "IconDashboard",
+      title: "키워드 분석",
+      url: "/brand-reputation",
+      icon: "IconChartLine",
     },
     {
-      title: "리스트업",
-      url: "#",
-      icon: "IconListDetails",
+      title: "리뷰 분석",
+      url: "/product-review",
+      icon: "IconShoppingCart",
     },
     {
-      title: "분석",
-      url: "#",
-      icon: "IconChartBar",
-    },
-    {
-      title: "프로젝트",
-      url: "#",
-      icon: "IconFolder",
-    },
-    {
-      title: "팀",
-      url: "#",
-      icon: "IconUsers",
+      title: "콘텐츠 분석",
+      url: "/content-reputation",
+      icon: "IconVideo",
     },
   ],
   navClouds: [
     {
-      title: "캡처",
-      icon: "IconCamera",
+      title: "모니터링 프로젝트",
+      icon: "IconFolder",
       isActive: true,
       url: "#",
       items: [
         {
-          title: "활성 제안서",
-          url: "#",
+          title: "티젠 콤부차",
+          url: "/project/teazen",
         },
         {
-          title: "보관됨",
-          url: "#",
-        },
-      ],
-    },
-    {
-      title: "제안서",
-      icon: "IconFileDescription",
-      url: "#",
-      items: [
-        {
-          title: "활성 제안서",
-          url: "#",
-        },
-        {
-          title: "보관됨",
-          url: "#",
+          title: "경쟁사 분석",
+          url: "/project/competitor",
         },
       ],
     },
     {
-      title: "프롬프트",
-      icon: "IconFileAi",
+      title: "저장된 리포트",
+      icon: "IconReport",
       url: "#",
       items: [
         {
-          title: "활성 제안서",
-          url: "#",
+          title: "최근 리포트",
+          url: "/reports/recent",
         },
         {
           title: "보관됨",
-          url: "#",
+          url: "/reports/archived",
         },
       ],
     },
@@ -163,19 +138,14 @@ const defaultData = {
   ],
   documents: [
     {
-      name: "데이터 라이브러리",
-      url: "#",
+      name: "크롤링 데이터",
+      url: "/data/crawled",
       icon: "IconDatabase",
     },
     {
-      name: "보고서",
-      url: "#",
+      name: "분석 리포트",
+      url: "/reports",
       icon: "IconReport",
-    },
-    {
-      name: "문서 도우미",
-      url: "#",
-      icon: "IconFileWord",
     },
   ],
 }
