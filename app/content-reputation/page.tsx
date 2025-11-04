@@ -97,7 +97,7 @@ export default function ContentReputationPage() {
               
               {/* 페이지 헤더 */}
               <div>
-                <h1 className="text-3xl font-bold mb-2">콘텐츠 평판 분석</h1>
+                <h1 className="text-3xl font-bold mb-2">콘텐츠 분석</h1>
                 <p className="text-muted-foreground">
                   유튜브, 인스타그램 콘텐츠의 인사이트를 수집하고 비교합니다
                 </p>

@@ -28,12 +28,15 @@ export function NavMain({
           <SidebarMenuItem className="flex items-center gap-2">
             <SidebarMenuButton
               asChild
-              tooltip="Brand Dashboard"
+              tooltip="Home"
               className="bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground min-w-8 duration-200 ease-linear"
             >
               <Link href="/dashboard">
                 <IconHome />
-                <span>Brand Dashboard</span>
+                <div className="flex flex-col items-start">
+                  <span className="font-semibold">Home</span>
+                  <span className="text-[10px] opacity-80">Monitoring</span>
+                </div>
               </Link>
             </SidebarMenuButton>
             <Button

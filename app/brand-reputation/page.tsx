@@ -142,7 +142,7 @@ export default function BrandReputationPage() {
             <div className="flex flex-col gap-4 p-4 md:gap-6 md:p-6 lg:gap-8 lg:p-8">
               
               <div>
-                <h1 className="text-3xl font-bold mb-2">브랜드 평판 분석</h1>
+                <h1 className="text-3xl font-bold mb-2">키워드 분석</h1>
                 <p className="text-muted-foreground">
                   온라인에서의 브랜드 및 제품 평판을 모니터링하고 비교 분석합니다
                 </p>
