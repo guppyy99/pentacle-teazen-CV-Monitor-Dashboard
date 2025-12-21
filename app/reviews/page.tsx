@@ -55,7 +55,15 @@ import {
 } from "@/components/ui/select"
 
 import type { Item, Review, ReviewStats, Category } from "@/types"
-import { mockCategories, mockItems, mockReviews, mockReviewStats } from "@/lib/mock-data"
+import {
+  mockCategories,
+  mockItems,
+  mockReviews,
+  mockReviewStats,
+  DATE_RANGE_OPTIONS,
+  filterDataByDateRange,
+  type DateRange,
+} from "@/lib/mock-data"
 
 // 워드클라우드 동적 import (SSR 비활성화)
 const ReactWordcloud = dynamic(() => import("react-wordcloud"), {
@@ -73,6 +81,7 @@ export default function ReviewsPage() {
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [sentimentFilter, setSentimentFilter] = useState<"all" | "positive" | "negative">("all")
+  const [dateRange, setDateRange] = useState<DateRange>("7d")
   const [isGeneratingAI, setIsGeneratingAI] = useState(false)
   const [aiSummary, setAiSummary] = useState<string | null>(null)
 
@@ -115,9 +124,15 @@ export default function ReviewsPage() {
   const trendChartData = useMemo(() => {
     if (selectedStats.length === 0) return []
 
+    // 기간에 맞게 필터링된 데이터 사용
+    const filteredStats = selectedStats.map(stat => ({
+      ...stat,
+      dailyReviews: filterDataByDateRange(stat.dailyReviews, dateRange)
+    }))
+
     // 모든 날짜 수집
     const allDates = new Set<string>()
-    selectedStats.forEach(stat => {
+    filteredStats.forEach(stat => {
       stat.dailyReviews.forEach(d => allDates.add(d.date))
     })
 
@@ -126,7 +141,7 @@ export default function ReviewsPage() {
     return sortedDates.map(date => {
       const dataPoint: Record<string, any> = { date: date.substring(5) } // MM-DD 형식
 
-      selectedStats.forEach((stat, index) => {
+      filteredStats.forEach((stat, index) => {
         const item = mockItems.find(i => i.id === stat.itemId)
         const dailyData = stat.dailyReviews.find(d => d.date === date)
         dataPoint[item?.productName.substring(0, 10) || `아이템${index + 1}`] = dailyData?.count || 0
@@ -134,7 +149,7 @@ export default function ReviewsPage() {
 
       return dataPoint
     })
-  }, [selectedStats])
+  }, [selectedStats, dateRange])
 
   // 워드클라우드 데이터 (긍정/부정)
   const keywordData = useMemo(() => {
@@ -279,10 +294,24 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
     <PageLayout>
       <div className="flex flex-col gap-6 p-6">
         {/* 헤더 */}
-        <div>
-        <h1 className="text-2xl font-bold">리뷰 조회</h1>
-        <p className="text-muted-foreground">아이템별 리뷰 데이터를 조회하고 비교 분석합니다 (최대 {MAX_SELECTION}개 선택)</p>
-      </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">리뷰 조회</h1>
+            <p className="text-muted-foreground">아이템별 리뷰 데이터를 조회하고 비교 분석합니다 (최대 {MAX_SELECTION}개 선택)</p>
+          </div>
+          <Select value={dateRange} onValueChange={(v: DateRange) => setDateRange(v)}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DATE_RANGE_OPTIONS.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
       <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
         {/* 좌측: 아이템 선택 */}
@@ -506,14 +535,20 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                   <Card>
                     <CardHeader>
                       <CardTitle>일별 리뷰 발생 추이</CardTitle>
-                      <CardDescription>최근 7일간 리뷰 발생 현황</CardDescription>
+                      <CardDescription>
+                        {DATE_RANGE_OPTIONS.find(opt => opt.value === dateRange)?.label} 기준 리뷰 발생 현황
+                      </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
                           <AreaChart data={trendChartData}>
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="date" />
+                            <XAxis
+                              dataKey="date"
+                              tick={{ fontSize: 12 }}
+                              interval={dateRange === "7d" ? 0 : dateRange === "1m" ? 4 : "preserveStartEnd"}
+                            />
                             <YAxis />
                             <Tooltip />
                             <Legend />
