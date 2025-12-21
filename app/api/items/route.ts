@@ -1,13 +1,48 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@/lib/supabase"
+import { createServerClient, useMockData } from "@/lib/supabase"
 import { detectPlatform, PLATFORM_INFO } from "@/types"
+import { mockItems, mockCategories } from "@/lib/mock-data"
 
 // GET /api/items - 아이템 목록 조회
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerClient()
     const { searchParams } = new URL(request.url)
     const categoryId = searchParams.get("categoryId")
+
+    // Mock 모드
+    if (useMockData) {
+      let items = mockItems
+      if (categoryId && categoryId !== "all") {
+        items = items.filter((item) => item.categoryId === categoryId)
+      }
+
+      return NextResponse.json(
+        items.map((item) => {
+          const category = mockCategories.find((c) => c.id === item.categoryId)
+          return {
+            id: item.id,
+            category_id: item.categoryId,
+            url: item.url,
+            platform: item.platform,
+            product_name: item.productName,
+            product_image: item.productImage,
+            price: null,
+            last_crawled_at: item.lastCrawledAt,
+            created_at: item.createdAt,
+            categories: category
+              ? { id: category.id, name: category.name, color: category.color }
+              : null,
+            review_count: item.reviewCount,
+            avg_rating: item.avgRating,
+          }
+        })
+      )
+    }
+
+    const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+    }
 
     let query = supabase
       .from("items")
@@ -59,9 +94,7 @@ export async function GET(request: NextRequest) {
 // POST /api/items - 아이템 생성
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerClient()
     const body = await request.json()
-
     const { url, product_name, product_image, category_id, price } = body
 
     if (!url) {
@@ -72,6 +105,33 @@ export async function POST(request: NextRequest) {
     const platform = detectPlatform(url)
     if (!platform) {
       return NextResponse.json({ error: "Unsupported platform" }, { status: 400 })
+    }
+
+    // Mock 모드
+    if (useMockData) {
+      const category = mockCategories.find((c) => c.id === category_id)
+      const newItem = {
+        id: `item-${Date.now()}`,
+        category_id,
+        url,
+        platform,
+        product_name: product_name || "상품명 없음",
+        product_image,
+        price,
+        last_crawled_at: null,
+        created_at: new Date().toISOString(),
+        categories: category
+          ? { id: category.id, name: category.name, color: category.color }
+          : null,
+        review_count: 0,
+        avg_rating: 0,
+      }
+      return NextResponse.json(newItem, { status: 201 })
+    }
+
+    const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
     }
 
     const { data, error } = await supabase
