@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
+import dynamic from "next/dynamic"
 import Image from "next/image"
 import {
   IconStar,
@@ -55,6 +56,16 @@ import {
 
 import type { Item, Review, ReviewStats, Category } from "@/types"
 import { mockCategories, mockItems, mockReviews, mockReviewStats } from "@/lib/mock-data"
+
+// 워드클라우드 동적 import (SSR 비활성화)
+const ReactWordcloud = dynamic(() => import("react-wordcloud"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+      로딩 중...
+    </div>
+  ),
+})
 
 const MAX_SELECTION = 4
 
@@ -140,17 +151,61 @@ export default function ReviewsPage() {
       })
     })
 
+    const positiveList = Object.entries(positive)
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+
+    const negativeList = Object.entries(negative)
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+
+    // 워드클라우드용 데이터 (text, value 형식)
+    const positiveCloud = positiveList.map(kw => ({ text: kw.word, value: kw.count }))
+    const negativeCloud = negativeList.map(kw => ({ text: kw.word, value: kw.count }))
+
     return {
-      positive: Object.entries(positive)
-        .map(([word, count]) => ({ word, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10),
-      negative: Object.entries(negative)
-        .map(([word, count]) => ({ word, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10),
+      positive: positiveList,
+      negative: negativeList,
+      positiveCloud,
+      negativeCloud,
     }
   }, [selectedStats])
+
+  // 워드클라우드 옵션 - 긍정 (녹색 계열)
+  const positiveWordcloudOptions = useMemo(() => ({
+    colors: ["#22c55e", "#16a34a", "#15803d", "#166534", "#14532d", "#4ade80", "#86efac"],
+    enableTooltip: true,
+    deterministic: true,
+    fontFamily: "Pretendard, sans-serif",
+    fontSizes: [24, 64] as [number, number],
+    fontStyle: "normal",
+    fontWeight: "bold",
+    padding: 4,
+    rotations: 2,
+    rotationAngles: [0, 0] as [number, number],
+    scale: "sqrt" as const,
+    spiral: "archimedean" as const,
+    transitionDuration: 500,
+  }), [])
+
+  // 워드클라우드 옵션 - 부정 (빨간 계열)
+  const negativeWordcloudOptions = useMemo(() => ({
+    colors: ["#ef4444", "#dc2626", "#b91c1c", "#991b1b", "#7f1d1d", "#f87171", "#fca5a5"],
+    enableTooltip: true,
+    deterministic: true,
+    fontFamily: "Pretendard, sans-serif",
+    fontSizes: [24, 64] as [number, number],
+    fontStyle: "normal",
+    fontWeight: "bold",
+    padding: 4,
+    rotations: 2,
+    rotationAngles: [0, 0] as [number, number],
+    scale: "sqrt" as const,
+    spiral: "archimedean" as const,
+    transitionDuration: 500,
+  }), [])
 
   // 비교 차트 데이터
   const comparisonData = selectedItemsData.map(item => {
@@ -544,7 +599,17 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                           긍정 키워드
                         </CardTitle>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="space-y-4">
+                        {/* 워드클라우드 */}
+                        {keywordData.positiveCloud.length > 0 && (
+                          <div className="h-[200px] w-full rounded-lg border bg-gradient-to-br from-green-50 to-emerald-50 p-2">
+                            <ReactWordcloud
+                              words={keywordData.positiveCloud}
+                              options={positiveWordcloudOptions}
+                            />
+                          </div>
+                        )}
+                        {/* 키워드 배지 */}
                         <div className="flex flex-wrap gap-2">
                           {keywordData.positive.map((kw, index) => (
                             <Badge
@@ -572,7 +637,17 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                           부정 키워드
                         </CardTitle>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="space-y-4">
+                        {/* 워드클라우드 */}
+                        {keywordData.negativeCloud.length > 0 && (
+                          <div className="h-[200px] w-full rounded-lg border bg-gradient-to-br from-red-50 to-rose-50 p-2">
+                            <ReactWordcloud
+                              words={keywordData.negativeCloud}
+                              options={negativeWordcloudOptions}
+                            />
+                          </div>
+                        )}
+                        {/* 키워드 배지 */}
                         <div className="flex flex-wrap gap-2">
                           {keywordData.negative.map((kw, index) => (
                             <Badge

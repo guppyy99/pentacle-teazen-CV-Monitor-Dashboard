@@ -1,5 +1,37 @@
 import type { Category, Item, Review, ReviewStats } from "@/types"
 
+// 기간 타입
+export type DateRange = "7d" | "1m" | "3m" | "6m" | "1y"
+
+// 기간 옵션
+export const DATE_RANGE_OPTIONS: { value: DateRange; label: string; days: number }[] = [
+  { value: "7d", label: "7일", days: 7 },
+  { value: "1m", label: "1개월", days: 30 },
+  { value: "3m", label: "3개월", days: 90 },
+  { value: "6m", label: "6개월", days: 180 },
+  { value: "1y", label: "1년", days: 365 },
+]
+
+// 날짜 생성 헬퍼
+function generateDates(days: number): string[] {
+  const dates: string[] = []
+  const today = new Date()
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date(today)
+    date.setDate(date.getDate() - i)
+    dates.push(date.toISOString().split("T")[0])
+  }
+  return dates
+}
+
+// 일별 리뷰 데이터 생성
+function generateDailyReviews(days: number, baseCount: number = 30): { date: string; count: number }[] {
+  return generateDates(days).map(date => ({
+    date,
+    count: Math.floor(baseCount + Math.random() * baseCount * 0.8 - baseCount * 0.4)
+  }))
+}
+
 // 목업 카테고리
 export const mockCategories: Category[] = [
   {
@@ -145,7 +177,7 @@ export const mockReviews: Review[] = [
   },
 ]
 
-// 목업 리뷰 통계
+// 목업 리뷰 통계 (365일 데이터 포함)
 export const mockReviewStats: ReviewStats[] = [
   {
     itemId: "item-1",
@@ -154,15 +186,7 @@ export const mockReviewStats: ReviewStats[] = [
     positiveRate: 72,
     negativeRate: 12,
     neutralRate: 16,
-    dailyReviews: [
-      { date: "2024-12-14", count: 23 },
-      { date: "2024-12-15", count: 31 },
-      { date: "2024-12-16", count: 28 },
-      { date: "2024-12-17", count: 45 },
-      { date: "2024-12-18", count: 38 },
-      { date: "2024-12-19", count: 52 },
-      { date: "2024-12-20", count: 41 },
-    ],
+    dailyReviews: generateDailyReviews(365, 35),
     topKeywords: [
       { word: "맛있다", count: 523, sentiment: "positive" },
       { word: "상쾌하다", count: 312, sentiment: "positive" },
@@ -171,6 +195,11 @@ export const mockReviewStats: ReviewStats[] = [
       { word: "달다", count: 89, sentiment: "negative" },
       { word: "탄산", count: 234, sentiment: "positive" },
       { word: "레몬", count: 198, sentiment: "positive" },
+      { word: "건강", count: 176, sentiment: "positive" },
+      { word: "시원하다", count: 145, sentiment: "positive" },
+      { word: "재구매", count: 134, sentiment: "positive" },
+      { word: "비싸다", count: 78, sentiment: "negative" },
+      { word: "인공적", count: 45, sentiment: "negative" },
     ],
   },
   {
@@ -180,21 +209,99 @@ export const mockReviewStats: ReviewStats[] = [
     positiveRate: 68,
     negativeRate: 15,
     neutralRate: 17,
-    dailyReviews: [
-      { date: "2024-12-14", count: 15 },
-      { date: "2024-12-15", count: 22 },
-      { date: "2024-12-16", count: 19 },
-      { date: "2024-12-17", count: 33 },
-      { date: "2024-12-18", count: 27 },
-      { date: "2024-12-19", count: 35 },
-      { date: "2024-12-20", count: 29 },
-    ],
+    dailyReviews: generateDailyReviews(365, 25),
     topKeywords: [
       { word: "자몽", count: 412, sentiment: "positive" },
       { word: "새콤달콤", count: 287, sentiment: "positive" },
       { word: "시원하다", count: 198, sentiment: "positive" },
       { word: "향", count: 145, sentiment: "positive" },
       { word: "비싸다", count: 67, sentiment: "negative" },
+      { word: "상쾌", count: 134, sentiment: "positive" },
+      { word: "맛있다", count: 298, sentiment: "positive" },
+      { word: "탄산", count: 112, sentiment: "positive" },
+    ],
+  },
+  {
+    itemId: "item-3",
+    totalReviews: 654,
+    avgRating: 4.3,
+    positiveRate: 65,
+    negativeRate: 18,
+    neutralRate: 17,
+    dailyReviews: generateDailyReviews(365, 18),
+    topKeywords: [
+      { word: "복숭아", count: 345, sentiment: "positive" },
+      { word: "달콤", count: 234, sentiment: "positive" },
+      { word: "가격", count: 167, sentiment: "neutral" },
+      { word: "맛있다", count: 189, sentiment: "positive" },
+      { word: "달다", count: 98, sentiment: "negative" },
+    ],
+  },
+  {
+    itemId: "item-4",
+    totalReviews: 423,
+    avgRating: 4.7,
+    positiveRate: 78,
+    negativeRate: 8,
+    neutralRate: 14,
+    dailyReviews: generateDailyReviews(365, 12),
+    topKeywords: [
+      { word: "식초", count: 234, sentiment: "positive" },
+      { word: "건강", count: 198, sentiment: "positive" },
+      { word: "다이어트", count: 167, sentiment: "positive" },
+      { word: "맛있다", count: 145, sentiment: "positive" },
+      { word: "시다", count: 56, sentiment: "negative" },
+    ],
+  },
+  {
+    itemId: "item-5",
+    totalReviews: 312,
+    avgRating: 4.4,
+    positiveRate: 70,
+    negativeRate: 12,
+    neutralRate: 18,
+    dailyReviews: generateDailyReviews(365, 9),
+    topKeywords: [
+      { word: "포만감", count: 178, sentiment: "positive" },
+      { word: "다이어트", count: 156, sentiment: "positive" },
+      { word: "맛있다", count: 134, sentiment: "positive" },
+      { word: "가격", count: 89, sentiment: "neutral" },
+      { word: "효과없다", count: 34, sentiment: "negative" },
     ],
   },
 ]
+
+// 기간별 데이터 필터링 함수
+export function filterDataByDateRange(
+  data: { date: string; count: number }[],
+  range: DateRange
+): { date: string; count: number }[] {
+  const days = DATE_RANGE_OPTIONS.find(opt => opt.value === range)?.days || 7
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - days)
+
+  return data.filter(item => new Date(item.date) >= cutoffDate)
+}
+
+// 카테고리별 일별 리뷰 데이터 생성
+export function getCategoryDailyReviews(
+  categoryId: string,
+  range: DateRange
+): { date: string; count: number }[] {
+  const categoryItems = mockItems.filter(item => item.categoryId === categoryId)
+  const itemIds = categoryItems.map(item => item.id)
+  const stats = mockReviewStats.filter(s => itemIds.includes(s.itemId))
+
+  if (stats.length === 0) return []
+
+  const days = DATE_RANGE_OPTIONS.find(opt => opt.value === range)?.days || 7
+  const dates = generateDates(days)
+
+  return dates.map(date => {
+    const totalCount = stats.reduce((sum, stat) => {
+      const dayData = stat.dailyReviews.find(d => d.date === date)
+      return sum + (dayData?.count || 0)
+    }, 0)
+    return { date, count: totalCount }
+  })
+}
