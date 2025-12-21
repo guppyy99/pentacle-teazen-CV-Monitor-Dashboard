@@ -1,5 +1,8 @@
+// Re-export database types
+export * from "./database"
+
 // 플랫폼 타입
-export type Platform = "smartstore" | "coupang" | "11st" | "gmarket" | "auction" | "wemakeprice" | "tmon"
+export type Platform = "smartstore" | "coupang" | "naver" | "11st" | "gmarket" | "auction" | "wemakeprice" | "tmon"
 
 // 감정 분석 타입
 export type Sentiment = "positive" | "negative" | "neutral"
@@ -87,6 +90,7 @@ export interface AISummary {
 // 플랫폼 정보 매핑
 export const PLATFORM_INFO: Record<Platform, { name: string; color: string; icon: string }> = {
   smartstore: { name: "스마트스토어", color: "#03C75A", icon: "naver" },
+  naver: { name: "네이버", color: "#03C75A", icon: "naver" },
   coupang: { name: "쿠팡", color: "#E31837", icon: "coupang" },
   "11st": { name: "11번가", color: "#FF5722", icon: "11st" },
   gmarket: { name: "G마켓", color: "#00A651", icon: "gmarket" },
