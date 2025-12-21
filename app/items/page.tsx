@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Image from "next/image"
 import {
   IconPlus,
@@ -12,6 +12,7 @@ import {
   IconStar,
   IconMessage,
   IconPencil,
+  IconRefresh,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
 
@@ -56,14 +57,26 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 
-import type { Category, Item } from "@/types"
 import { detectPlatform, PLATFORM_INFO, CATEGORY_COLORS } from "@/types"
-import { mockCategories, mockItems } from "@/lib/mock-data"
+import {
+  getCategories,
+  getItems,
+  createCategory,
+  deleteCategory,
+  createItem,
+  updateItem,
+  deleteItem,
+  extractMetadata,
+  triggerCrawl,
+  type CategoryData,
+  type ItemData,
+} from "@/lib/api"
 
 export default function ItemsPage() {
-  const [items, setItems] = useState<Item[]>(mockItems)
-  const [categories, setCategories] = useState<Category[]>(mockCategories)
+  const [items, setItems] = useState<ItemData[]>([])
+  const [categories, setCategories] = useState<CategoryData[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [isPageLoading, setIsPageLoading] = useState(true)
 
   // 아이템 추가 모달 상태
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
@@ -72,14 +85,14 @@ export default function ItemsPage() {
   const [newItemCategory, setNewItemCategory] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [extractedInfo, setExtractedInfo] = useState<{
-    productName: string
-    productImage: string
+    product_name: string
+    product_image: string
     platform: string
   } | null>(null)
 
   // 아이템 수정 모달 상태
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
-  const [editingItem, setEditingItem] = useState<Item | null>(null)
+  const [editingItem, setEditingItem] = useState<ItemData | null>(null)
   const [editItemName, setEditItemName] = useState("")
   const [editItemCategory, setEditItemCategory] = useState("")
 
@@ -87,7 +100,32 @@ export default function ItemsPage() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState("")
 
-  // URL에서 상품 정보 추출 (목업)
+  // 크롤링 상태
+  const [crawlingItemId, setCrawlingItemId] = useState<string | null>(null)
+
+  // 데이터 로드
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const loadData = async () => {
+    try {
+      setIsPageLoading(true)
+      const [categoriesData, itemsData] = await Promise.all([
+        getCategories(),
+        getItems(),
+      ])
+      setCategories(categoriesData)
+      setItems(itemsData)
+    } catch (error) {
+      console.error("Failed to load data:", error)
+      toast.error("데이터 로드 실패")
+    } finally {
+      setIsPageLoading(false)
+    }
+  }
+
+  // URL에서 상품 정보 추출
   const handleExtractInfo = async () => {
     if (!newItemUrl) {
       toast.error("URL을 입력해주세요")
@@ -102,119 +140,170 @@ export default function ItemsPage() {
 
     setIsLoading(true)
 
-    // 크롤링 API 호출 시뮬레이션
-    await new Promise(resolve => setTimeout(resolve, 1500))
-
-    // 목업 데이터 반환
-    const extractedName = `티젠 콤부차 레몬 5g x 30개입`
-    setExtractedInfo({
-      productName: extractedName,
-      productImage: "https://shopping-phinf.pstatic.net/main_3246633/32466338621.20220527055831.jpg",
-      platform: platform,
-    })
-    setNewItemName(extractedName)
-
-    setIsLoading(false)
-    toast.success("상품 정보를 추출했습니다")
+    try {
+      const metadata = await extractMetadata(newItemUrl)
+      setExtractedInfo({
+        product_name: metadata.product_name || "상품명을 입력해주세요",
+        product_image: metadata.product_image || "",
+        platform: metadata.platform,
+      })
+      setNewItemName(metadata.product_name || "")
+      toast.success("상품 정보를 추출했습니다")
+    } catch (error) {
+      console.error("Extract error:", error)
+      // Fallback - 플랫폼만 설정
+      setExtractedInfo({
+        product_name: "",
+        product_image: "",
+        platform,
+      })
+      toast.info("메타데이터 추출 실패 - 수동 입력해주세요")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // 아이템 추가
-  const handleAddItem = () => {
-    if (!extractedInfo || !newItemCategory) {
+  const handleAddItem = async () => {
+    if (!newItemCategory) {
       toast.error("카테고리를 선택해주세요")
       return
     }
 
-    const platform = detectPlatform(newItemUrl)
-    if (!platform) return
+    try {
+      const newItem = await createItem({
+        url: newItemUrl,
+        product_name: newItemName || extractedInfo?.product_name || "상품명 없음",
+        product_image: extractedInfo?.product_image,
+        category_id: newItemCategory,
+      })
 
-    const newItem: Item = {
-      id: `item-${Date.now()}`,
-      url: newItemUrl,
-      platform: platform,
-      platformName: PLATFORM_INFO[platform].name,
-      productName: newItemName || extractedInfo.productName,
-      productImage: extractedInfo.productImage,
-      categoryId: newItemCategory,
-      lastCrawledAt: null,
-      reviewCount: 0,
-      avgRating: 0,
-      createdAt: new Date().toISOString(),
+      setItems([newItem, ...items])
+      setIsAddModalOpen(false)
+      setNewItemUrl("")
+      setNewItemName("")
+      setNewItemCategory("")
+      setExtractedInfo(null)
+      toast.success("아이템이 추가되었습니다")
+    } catch (error) {
+      console.error("Create item error:", error)
+      toast.error("아이템 추가 실패")
     }
-
-    setItems([...items, newItem])
-    setIsAddModalOpen(false)
-    setNewItemUrl("")
-    setNewItemName("")
-    setNewItemCategory("")
-    setExtractedInfo(null)
-    toast.success("아이템이 추가되었습니다")
   }
 
   // 아이템 수정 모달 열기
-  const handleOpenEditModal = (item: Item) => {
+  const handleOpenEditModal = (item: ItemData) => {
     setEditingItem(item)
-    setEditItemName(item.productName)
-    setEditItemCategory(item.categoryId)
+    setEditItemName(item.product_name)
+    setEditItemCategory(item.category_id || "")
     setIsEditModalOpen(true)
   }
 
   // 아이템 수정
-  const handleUpdateItem = () => {
+  const handleUpdateItem = async () => {
     if (!editingItem) return
 
-    setItems(items.map(item =>
-      item.id === editingItem.id
-        ? { ...item, productName: editItemName, categoryId: editItemCategory }
-        : item
-    ))
-    setIsEditModalOpen(false)
-    setEditingItem(null)
-    toast.success("아이템이 수정되었습니다")
+    try {
+      const updated = await updateItem(editingItem.id, {
+        product_name: editItemName,
+        category_id: editItemCategory,
+      })
+
+      setItems(items.map((item) => (item.id === editingItem.id ? updated : item)))
+      setIsEditModalOpen(false)
+      setEditingItem(null)
+      toast.success("아이템이 수정되었습니다")
+    } catch (error) {
+      console.error("Update item error:", error)
+      toast.error("아이템 수정 실패")
+    }
   }
 
   // 아이템 삭제
-  const handleDeleteItem = (itemId: string) => {
-    setItems(items.filter(item => item.id !== itemId))
-    toast.success("아이템이 삭제되었습니다")
+  const handleDeleteItem = async (itemId: string) => {
+    try {
+      await deleteItem(itemId)
+      setItems(items.filter((item) => item.id !== itemId))
+      toast.success("아이템이 삭제되었습니다")
+    } catch (error) {
+      console.error("Delete item error:", error)
+      toast.error("아이템 삭제 실패")
+    }
   }
 
   // 카테고리 추가
-  const handleAddCategory = () => {
+  const handleAddCategory = async () => {
     if (!newCategoryName.trim()) {
       toast.error("카테고리 이름을 입력해주세요")
       return
     }
 
-    const colorIndex = categories.length % CATEGORY_COLORS.length
-    const newCategory: Category = {
-      id: `cat-${Date.now()}`,
-      name: newCategoryName.trim(),
-      color: CATEGORY_COLORS[colorIndex],
-      createdAt: new Date().toISOString(),
-    }
+    try {
+      const colorIndex = categories.length % CATEGORY_COLORS.length
+      const newCategory = await createCategory({
+        name: newCategoryName.trim(),
+        color: CATEGORY_COLORS[colorIndex],
+      })
 
-    setCategories([...categories, newCategory])
-    setIsCategoryModalOpen(false)
-    setNewCategoryName("")
-    toast.success("카테고리가 추가되었습니다")
+      setCategories([...categories, newCategory])
+      setIsCategoryModalOpen(false)
+      setNewCategoryName("")
+      toast.success("카테고리가 추가되었습니다")
+    } catch (error) {
+      console.error("Create category error:", error)
+      toast.error("카테고리 추가 실패")
+    }
   }
 
   // 카테고리 삭제
-  const handleDeleteCategory = (categoryId: string) => {
-    setItems(items.filter(item => item.categoryId !== categoryId))
-    setCategories(categories.filter(cat => cat.id !== categoryId))
-    toast.success("카테고리가 삭제되었습니다")
+  const handleDeleteCategory = async (categoryId: string) => {
+    try {
+      await deleteCategory(categoryId)
+      setItems(items.filter((item) => item.category_id !== categoryId))
+      setCategories(categories.filter((cat) => cat.id !== categoryId))
+      toast.success("카테고리가 삭제되었습니다")
+    } catch (error) {
+      console.error("Delete category error:", error)
+      toast.error("카테고리 삭제 실패")
+    }
+  }
+
+  // 크롤링 실행
+  const handleCrawl = async (itemId: string) => {
+    setCrawlingItemId(itemId)
+    try {
+      const result = await triggerCrawl(itemId)
+      toast.success(`크롤링 완료: ${result.crawled}건 수집, ${result.inserted}건 저장`)
+      // 아이템 목록 새로고침
+      const updatedItems = await getItems()
+      setItems(updatedItems)
+    } catch (error) {
+      console.error("Crawl error:", error)
+      toast.error("크롤링 실패")
+    } finally {
+      setCrawlingItemId(null)
+    }
   }
 
   // 필터링된 아이템
-  const filteredItems = selectedCategory === "all"
-    ? items
-    : items.filter(item => item.categoryId === selectedCategory)
+  const filteredItems =
+    selectedCategory === "all"
+      ? items
+      : items.filter((item) => item.category_id === selectedCategory)
 
   // 카테고리별 아이템 수
   const getCategoryItemCount = (categoryId: string) => {
-    return items.filter(item => item.categoryId === categoryId).length
+    return items.filter((item) => item.category_id === categoryId).length
+  }
+
+  if (isPageLoading) {
+    return (
+      <PageLayout>
+        <div className="flex items-center justify-center h-96">
+          <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </PageLayout>
+    )
   }
 
   return (
@@ -224,7 +313,9 @@ export default function ItemsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">아이템 관리</h1>
-            <p className="text-muted-foreground">모니터링할 오픈마켓 상품을 등록하고 관리합니다</p>
+            <p className="text-muted-foreground">
+              모니터링할 오픈마켓 상품을 등록하고 관리합니다
+            </p>
           </div>
           <div className="flex gap-2">
             <Dialog open={isCategoryModalOpen} onOpenChange={setIsCategoryModalOpen}>
@@ -252,7 +343,10 @@ export default function ItemsPage() {
                   />
                 </div>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsCategoryModalOpen(false)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsCategoryModalOpen(false)}
+                  >
                     취소
                   </Button>
                   <Button onClick={handleAddCategory}>추가</Button>
@@ -307,17 +401,25 @@ export default function ItemsPage() {
                       <div className="rounded-lg border p-4">
                         <div className="flex gap-4">
                           <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-muted">
-                            <Image
-                              src={extractedInfo.productImage}
-                              alt={extractedInfo.productName}
-                              fill
-                              className="object-cover"
-                              unoptimized
-                            />
+                            {extractedInfo.product_image ? (
+                              <Image
+                                src={extractedInfo.product_image}
+                                alt="상품 이미지"
+                                fill
+                                className="object-cover"
+                                unoptimized
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
+                                No Image
+                              </div>
+                            )}
                           </div>
                           <div className="flex-1">
                             <Badge variant="secondary">
-                              {PLATFORM_INFO[extractedInfo.platform as keyof typeof PLATFORM_INFO]?.name}
+                              {PLATFORM_INFO[
+                                extractedInfo.platform as keyof typeof PLATFORM_INFO
+                              ]?.name || extractedInfo.platform}
                             </Badge>
                           </div>
                         </div>
@@ -348,7 +450,7 @@ export default function ItemsPage() {
                             <div className="flex items-center gap-2">
                               <div
                                 className="h-3 w-3 rounded-full"
-                                style={{ backgroundColor: cat.color }}
+                                style={{ backgroundColor: cat.color || "#888" }}
                               />
                               {cat.name}
                             </div>
@@ -359,16 +461,22 @@ export default function ItemsPage() {
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => {
-                    setIsAddModalOpen(false)
-                    setNewItemUrl("")
-                    setNewItemName("")
-                    setExtractedInfo(null)
-                    setNewItemCategory("")
-                  }}>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setIsAddModalOpen(false)
+                      setNewItemUrl("")
+                      setNewItemName("")
+                      setExtractedInfo(null)
+                      setNewItemCategory("")
+                    }}
+                  >
                     취소
                   </Button>
-                  <Button onClick={handleAddItem} disabled={!extractedInfo || !newItemCategory}>
+                  <Button
+                    onClick={handleAddItem}
+                    disabled={!extractedInfo || !newItemCategory}
+                  >
                     추가
                   </Button>
                 </DialogFooter>
@@ -382,24 +490,31 @@ export default function ItemsPage() {
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>아이템 수정</DialogTitle>
-              <DialogDescription>
-                아이템 정보를 수정합니다.
-              </DialogDescription>
+              <DialogDescription>아이템 정보를 수정합니다.</DialogDescription>
             </DialogHeader>
             {editingItem && (
               <div className="grid gap-4 py-4">
                 <div className="flex gap-4">
                   <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-muted">
-                    <Image
-                      src={editingItem.productImage}
-                      alt={editingItem.productName}
-                      fill
-                      className="object-cover"
-                      unoptimized
-                    />
+                    {editingItem.product_image ? (
+                      <Image
+                        src={editingItem.product_image}
+                        alt={editingItem.product_name}
+                        fill
+                        className="object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
+                        No Image
+                      </div>
+                    )}
                   </div>
                   <div className="flex-1">
-                    <Badge variant="secondary">{editingItem.platformName}</Badge>
+                    <Badge variant="secondary">
+                      {PLATFORM_INFO[editingItem.platform as keyof typeof PLATFORM_INFO]
+                        ?.name || editingItem.platform}
+                    </Badge>
                     <p className="mt-1 text-xs text-muted-foreground truncate">
                       {editingItem.url}
                     </p>
@@ -428,7 +543,7 @@ export default function ItemsPage() {
                           <div className="flex items-center gap-2">
                             <div
                               className="h-3 w-3 rounded-full"
-                              style={{ backgroundColor: cat.color }}
+                              style={{ backgroundColor: cat.color || "#888" }}
                             />
                             {cat.name}
                           </div>
@@ -465,23 +580,22 @@ export default function ItemsPage() {
                 onClick={() => setSelectedCategory(cat.id)}
                 className="pr-8"
                 style={{
-                  borderColor: selectedCategory === cat.id ? undefined : cat.color,
-                  backgroundColor: selectedCategory === cat.id ? cat.color : undefined,
+                  borderColor: selectedCategory === cat.id ? undefined : cat.color || undefined,
+                  backgroundColor: selectedCategory === cat.id ? cat.color || undefined : undefined,
                 }}
               >
                 <div
                   className="mr-2 h-2 w-2 rounded-full"
                   style={{
-                    backgroundColor: selectedCategory === cat.id ? "white" : cat.color
+                    backgroundColor:
+                      selectedCategory === cat.id ? "white" : cat.color || "#888",
                   }}
                 />
                 {cat.name} ({getCategoryItemCount(cat.id)})
               </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <button
-                    className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/20 group-hover:opacity-100"
-                  >
+                  <button className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 opacity-0 transition-opacity hover:bg-destructive/20 group-hover:opacity-100">
                     <IconX className="h-3 w-3" />
                   </button>
                 </AlertDialogTrigger>
@@ -489,8 +603,8 @@ export default function ItemsPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>카테고리 삭제</AlertDialogTitle>
                     <AlertDialogDescription>
-                      &apos;{cat.name}&apos; 카테고리를 삭제하시겠습니까?
-                      이 카테고리에 속한 모든 아이템도 함께 삭제됩니다.
+                      &apos;{cat.name}&apos; 카테고리를 삭제하시겠습니까? 이 카테고리에
+                      속한 모든 아이템도 함께 삭제됩니다.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -523,26 +637,46 @@ export default function ItemsPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {filteredItems.map((item) => {
-              const category = categories.find(c => c.id === item.categoryId)
+              const category = categories.find((c) => c.id === item.category_id)
+              const isCrawling = crawlingItemId === item.id
               return (
                 <Card key={item.id} className="group overflow-hidden">
                   <div className="relative aspect-square bg-muted">
-                    <Image
-                      src={item.productImage}
-                      alt={item.productName}
-                      fill
-                      className="object-cover transition-transform group-hover:scale-105"
-                      unoptimized
-                    />
+                    {item.product_image ? (
+                      <Image
+                        src={item.product_image}
+                        alt={item.product_name}
+                        fill
+                        className="object-cover transition-transform group-hover:scale-105"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-muted-foreground">
+                        No Image
+                      </div>
+                    )}
                     <div className="absolute left-2 top-2">
                       <Badge
-                        style={{ backgroundColor: category?.color }}
+                        style={{ backgroundColor: category?.color || "#888" }}
                         className="text-white"
                       >
-                        {category?.name}
+                        {category?.name || "미분류"}
                       </Badge>
                     </div>
                     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-8 w-8"
+                        onClick={() => handleCrawl(item.id)}
+                        disabled={isCrawling}
+                      >
+                        {isCrawling ? (
+                          <IconLoader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <IconRefresh className="h-4 w-4" />
+                        )}
+                      </Button>
                       <Button
                         size="icon"
                         variant="secondary"
@@ -561,11 +695,7 @@ export default function ItemsPage() {
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button
-                            size="icon"
-                            variant="destructive"
-                            className="h-8 w-8"
-                          >
+                          <Button size="icon" variant="destructive" className="h-8 w-8">
                             <IconTrash className="h-4 w-4" />
                           </Button>
                         </AlertDialogTrigger>
@@ -573,7 +703,8 @@ export default function ItemsPage() {
                           <AlertDialogHeader>
                             <AlertDialogTitle>아이템 삭제</AlertDialogTitle>
                             <AlertDialogDescription>
-                              이 아이템을 삭제하시겠습니까? 수집된 리뷰 데이터도 함께 삭제됩니다.
+                              이 아이템을 삭제하시겠습니까? 수집된 리뷰 데이터도 함께
+                              삭제됩니다.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -591,11 +722,12 @@ export default function ItemsPage() {
                   </div>
                   <CardHeader className="p-4 pb-2">
                     <CardTitle className="line-clamp-2 text-sm font-medium">
-                      {item.productName}
+                      {item.product_name}
                     </CardTitle>
                     <CardDescription className="flex items-center gap-1">
                       <Badge variant="outline" className="text-xs">
-                        {item.platformName}
+                        {PLATFORM_INFO[item.platform as keyof typeof PLATFORM_INFO]?.name ||
+                          item.platform}
                       </Badge>
                     </CardDescription>
                   </CardHeader>
@@ -603,17 +735,17 @@ export default function ItemsPage() {
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <IconStar className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                        <span>{item.avgRating || "-"}</span>
+                        <span>{item.avg_rating || "-"}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <IconMessage className="h-4 w-4" />
-                        <span>{item.reviewCount.toLocaleString()}건</span>
+                        <span>{(item.review_count || 0).toLocaleString()}건</span>
                       </div>
                     </div>
                   </CardContent>
                   <CardFooter className="border-t px-4 py-2 text-xs text-muted-foreground">
-                    {item.lastCrawledAt ? (
-                      <>마지막 수집: {new Date(item.lastCrawledAt).toLocaleDateString()}</>
+                    {item.last_crawled_at ? (
+                      <>마지막 수집: {new Date(item.last_crawled_at).toLocaleDateString()}</>
                     ) : (
                       "아직 수집된 데이터 없음"
                     )}
