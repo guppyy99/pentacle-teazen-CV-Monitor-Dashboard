@@ -6,83 +6,31 @@
   },
   "navMain": [
     {
-      "title": "키워드 분석",
-      "url": "/brand-reputation",
-      "icon": "IconChartLine"
+      "title": "아이템 관리",
+      "url": "/items",
+      "icon": "IconPackage"
     },
     {
-      "title": "리뷰 분석",
-      "url": "/product-review",
-      "icon": "IconShoppingCart"
+      "title": "카테고리별 조회",
+      "url": "/categories",
+      "icon": "IconCategory"
     },
     {
-      "title": "콘텐츠 분석",
-      "url": "/content-reputation",
-      "icon": "IconVideo"
-    }
-  ],
-  "navClouds": [
-    {
-      "title": "모니터링 프로젝트",
-      "icon": "IconFolder",
-      "isActive": true,
-      "url": "#",
-      "items": [
-        {
-          "title": "티젠 콤부차",
-          "url": "/project/teazen"
-        },
-        {
-          "title": "경쟁사 분석",
-          "url": "/project/competitor"
-        }
-      ]
-    },
-    {
-      "title": "저장된 리포트",
-      "icon": "IconReport",
-      "url": "#",
-      "items": [
-        {
-          "title": "최근 리포트",
-          "url": "/reports/recent"
-        },
-        {
-          "title": "보관됨",
-          "url": "/reports/archived"
-        }
-      ]
+      "title": "리뷰 조회",
+      "url": "/reviews",
+      "icon": "IconMessageCircle"
     }
   ],
   "navSecondary": [
     {
       "title": "설정",
-      "url": "#",
+      "url": "/settings",
       "icon": "IconSettings"
     },
     {
       "title": "도움말",
       "url": "#",
       "icon": "IconHelp"
-    },
-    {
-      "title": "검색",
-      "url": "#",
-      "icon": "IconSearch"
-    }
-  ],
-  "documents": [
-    {
-      "name": "크롤링 데이터",
-      "url": "/data/crawled",
-      "icon": "IconDatabase"
-    },
-    {
-      "name": "분석 리포트",
-      "url": "/reports",
-      "icon": "IconReport"
     }
   ]
 }
-
-
