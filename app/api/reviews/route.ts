@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient, useMockData } from "@/lib/supabase"
-import { mockReviews, mockItems, mockReviewStats, filterDataByDateRange, type DateRange } from "@/lib/mock-data"
+import { createServerClient, useLocalDB } from "@/lib/supabase"
+import { localDB } from "@/lib/local-db"
 
 // GET /api/reviews - 리뷰 목록 조회
 export async function GET(request: NextRequest) {
@@ -13,50 +13,28 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "100")
     const offset = parseInt(searchParams.get("offset") || "0")
 
-    // Mock 모드
-    if (useMockData) {
-      let reviews = [...mockReviews]
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      let reviews = await localDB.reviews.getAll({
+        itemId: itemId || undefined,
+        sentiment: sentiment && sentiment !== "all" ? sentiment : undefined,
+      })
 
-      if (itemId) {
-        reviews = reviews.filter((r) => r.itemId === itemId)
-      }
+      // itemIds 필터링
       if (itemIds) {
         const ids = itemIds.split(",").map((id) => id.trim())
-        reviews = reviews.filter((r) => ids.includes(r.itemId))
-      }
-      if (sentiment && sentiment !== "all") {
-        reviews = reviews.filter((r) => r.sentiment === sentiment)
+        reviews = reviews.filter((r) => ids.includes(r.item_id))
       }
 
       const total = reviews.length
       reviews = reviews.slice(offset, offset + limit)
 
       return NextResponse.json({
-        reviews: reviews.map((r) => {
-          const item = mockItems.find((i) => i.id === r.itemId)
-          return {
-            id: r.id,
-            item_id: r.itemId,
-            author: r.author,
-            rating: r.rating,
-            content: r.content,
-            images: [],
-            date: r.date,
-            sentiment: r.sentiment,
-            crawled_at: r.date,
-            items: item
-              ? {
-                  id: item.id,
-                  product_name: item.productName,
-                  platform: item.platform,
-                  product_image: item.productImage,
-                }
-              : null,
-          }
-        }),
+        reviews,
         total,
         limit,
         offset,
+        localDB: true,
       })
     }
 
@@ -117,43 +95,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "itemIds required" }, { status: 400 })
     }
 
-    // Mock 모드
-    if (useMockData) {
-      const stats = itemIds.map((itemId: string) => {
-        const stat = mockReviewStats.find((s) => s.itemId === itemId)
-        if (!stat) {
-          return {
-            itemId,
-            totalReviews: 0,
-            avgRating: 0,
-            positiveRate: 0,
-            negativeRate: 0,
-            neutralRate: 0,
-            dailyReviews: [],
-          }
-        }
-
-        const filteredDaily = filterDataByDateRange(stat.dailyReviews, (dateRange as DateRange) || "7d")
-
-        return {
-          itemId,
-          totalReviews: stat.totalReviews,
-          avgRating: stat.avgRating,
-          positiveRate: stat.positiveRate,
-          negativeRate: stat.negativeRate,
-          neutralRate: stat.neutralRate,
-          dailyReviews: filteredDaily,
-        }
-      })
-
-      return NextResponse.json(stats)
-    }
-
-    const supabase = createServerClient()
-    if (!supabase) {
-      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
-    }
-
     // 기간 계산
     const now = new Date()
     const days =
@@ -168,6 +109,65 @@ export async function POST(request: NextRequest) {
     const fromDate = new Date(now)
     fromDate.setDate(fromDate.getDate() - days)
     const fromDateStr = fromDate.toISOString().split("T")[0]
+
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const stats = await Promise.all(
+        itemIds.map(async (itemId: string) => {
+          let reviews = await localDB.reviews.getByItemId(itemId)
+
+          // 날짜 필터링
+          reviews = reviews.filter((r) => r.date && r.date >= fromDateStr)
+
+          if (reviews.length === 0) {
+            return {
+              itemId,
+              totalReviews: 0,
+              avgRating: 0,
+              positiveRate: 0,
+              negativeRate: 0,
+              neutralRate: 0,
+              dailyReviews: [],
+            }
+          }
+
+          const avgRating =
+            reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / reviews.length
+
+          const positive = reviews.filter((r) => r.sentiment === "positive").length
+          const negative = reviews.filter((r) => r.sentiment === "negative").length
+          const neutral = reviews.length - positive - negative
+
+          const dailyCounts: Record<string, number> = {}
+          reviews.forEach((r) => {
+            if (r.date) {
+              dailyCounts[r.date] = (dailyCounts[r.date] || 0) + 1
+            }
+          })
+
+          const dailyReviews = Object.entries(dailyCounts)
+            .map(([date, count]) => ({ date, count }))
+            .sort((a, b) => a.date.localeCompare(b.date))
+
+          return {
+            itemId,
+            totalReviews: reviews.length,
+            avgRating: Math.round(avgRating * 10) / 10,
+            positiveRate: Math.round((positive / reviews.length) * 100),
+            negativeRate: Math.round((negative / reviews.length) * 100),
+            neutralRate: Math.round((neutral / reviews.length) * 100),
+            dailyReviews,
+          }
+        })
+      )
+
+      return NextResponse.json(stats)
+    }
+
+    const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+    }
 
     // 각 아이템별 통계 계산
     const stats = await Promise.all(

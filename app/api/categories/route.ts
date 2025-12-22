@@ -1,32 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient, useMockData } from "@/lib/supabase"
-import { mockCategories } from "@/lib/mock-data"
+import { createServerClient, useLocalDB } from "@/lib/supabase"
+import { localDB } from "@/lib/local-db"
 
 // GET /api/categories - 카테고리 목록 조회
 export async function GET() {
   try {
-    // Mock 모드
-    if (useMockData) {
-      return NextResponse.json(
-        mockCategories.map((c) => ({
-          id: c.id,
-          name: c.name,
-          color: c.color,
-          created_at: c.createdAt,
-        }))
-      )
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const categories = await localDB.categories.getAll()
+      return NextResponse.json(categories)
     }
 
     const supabase = createServerClient()
     if (!supabase) {
-      return NextResponse.json(
-        mockCategories.map((c) => ({
-          id: c.id,
-          name: c.name,
-          color: c.color,
-          created_at: c.createdAt,
-        }))
-      )
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
     }
 
     const { data, error } = await supabase
@@ -56,14 +43,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 })
     }
 
-    // Mock 모드
-    if (useMockData) {
-      const newCategory = {
-        id: `cat-${Date.now()}`,
-        name,
-        color: color || "#888888",
-        created_at: new Date().toISOString(),
-      }
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const newCategory = await localDB.categories.create({ name, color })
       return NextResponse.json(newCategory, { status: 201 })
     }
 
@@ -90,7 +72,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE /api/categories - 카테고리 삭제 (body에 id)
+// DELETE /api/categories - 카테고리 삭제 (query param id)
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -100,8 +82,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Category ID is required" }, { status: 400 })
     }
 
-    // Mock 모드
-    if (useMockData) {
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      await localDB.categories.delete(id)
       return NextResponse.json({ success: true })
     }
 

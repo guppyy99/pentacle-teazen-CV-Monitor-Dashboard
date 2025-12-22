@@ -11,8 +11,12 @@ export const isSupabaseConfigured = Boolean(
   !supabaseUrl.includes("your-project")
 )
 
-// Mock 모드 확인
-export const useMockData = process.env.USE_MOCK_DATA === "true" || !isSupabaseConfigured
+// 로컬 DB 사용 여부 (Supabase 대신 JSON 파일 사용)
+// USE_MOCK_DATA=true 또는 Supabase 미설정시 로컬 DB 사용
+export const useLocalDB = process.env.USE_MOCK_DATA === "true" || !isSupabaseConfigured
+
+// 레거시 호환 (useMockData는 이제 useLocalDB와 동일)
+export const useMockData = useLocalDB
 
 // Client for browser/client-side usage
 export const supabase: SupabaseClient<Database> | null = isSupabaseConfigured

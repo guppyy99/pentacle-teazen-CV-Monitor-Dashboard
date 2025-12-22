@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@/lib/supabase"
+import { createServerClient, useLocalDB } from "@/lib/supabase"
+import { localDB } from "@/lib/local-db"
 import { tagReviewsBatch, generateInsights, extractKeywords } from "@/lib/services/openai"
+
+// OpenAI API 키 확인
+const isOpenAIConfigured = Boolean(
+  process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes("your-")
+)
 
 // POST /api/analyze - AI 분석 실행
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerClient()
     const body = await request.json()
     const { itemIds, type, dateRange } = body
 
     if (!itemIds || itemIds.length === 0) {
       return NextResponse.json({ error: "itemIds required" }, { status: 400 })
+    }
+
+    if (!isOpenAIConfigured) {
+      return NextResponse.json({ error: "OpenAI API key not configured" }, { status: 503 })
     }
 
     // 기간 계산
@@ -28,20 +37,43 @@ export async function POST(request: NextRequest) {
     const fromDateStr = fromDate.toISOString().split("T")[0]
 
     // 리뷰 가져오기
-    const { data: reviews, error } = await supabase
-      .from("reviews")
-      .select("id, content, rating, sentiment, date")
-      .in("item_id", itemIds)
-      .gte("date", fromDateStr)
-      .order("date", { ascending: false })
-      .limit(200)
+    let reviews: Array<{
+      id: string
+      content: string
+      rating: number
+      sentiment: string | null
+      date: string | null
+    }> = []
 
-    if (error) {
-      console.error("Reviews fetch error:", error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    if (useLocalDB) {
+      const allReviews = await Promise.all(
+        itemIds.map((itemId: string) => localDB.reviews.getByItemId(itemId))
+      )
+      reviews = allReviews.flat()
+        .filter(r => r.date && r.date >= fromDateStr)
+        .slice(0, 200)
+    } else {
+      const supabase = createServerClient()
+      if (!supabase) {
+        return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+      }
+
+      const { data, error } = await supabase
+        .from("reviews")
+        .select("id, content, rating, sentiment, date")
+        .in("item_id", itemIds)
+        .gte("date", fromDateStr)
+        .order("date", { ascending: false })
+        .limit(200)
+
+      if (error) {
+        console.error("Reviews fetch error:", error)
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+      reviews = data || []
     }
 
-    if (!reviews || reviews.length === 0) {
+    if (reviews.length === 0) {
       return NextResponse.json({
         message: "No reviews found for analysis",
         analysis: null,
@@ -65,14 +97,27 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ message: "No untagged reviews", tagged: 0 })
         }
 
+        console.log(`[Analyze] Tagging ${untaggedReviews.length} reviews...`)
         const tagResults = await tagReviewsBatch(untaggedReviews)
 
         // DB 업데이트
-        for (const result of tagResults) {
-          await supabase
-            .from("reviews")
-            .update({ sentiment: result.sentiment })
-            .eq("id", result.reviewId)
+        if (useLocalDB) {
+          const db = await import("@/lib/local-db")
+          const localReviews = db.localDB.reviews
+
+          // 로컬 DB의 리뷰 업데이트는 현재 지원하지 않음
+          // 대신 결과만 반환
+          console.log(`[Analyze] Tagged ${tagResults.length} reviews (local DB - not persisted)`)
+        } else {
+          const supabase = createServerClient()
+          if (supabase) {
+            for (const result of tagResults) {
+              await supabase
+                .from("reviews")
+                .update({ sentiment: result.sentiment })
+                .eq("id", result.reviewId)
+            }
+          }
         }
 
         return NextResponse.json({
@@ -83,12 +128,23 @@ export async function POST(request: NextRequest) {
 
       case "insights": {
         // 아이템 정보 가져오기
-        const { data: items } = await supabase
-          .from("items")
-          .select("product_name")
-          .in("id", itemIds)
+        let productName = "상품"
 
-        const productName = items?.map((i) => i.product_name).join(", ") || "상품"
+        if (useLocalDB) {
+          const items = await Promise.all(
+            itemIds.map((id: string) => localDB.items.getById(id))
+          )
+          productName = items.filter(Boolean).map(i => i!.product_name).join(", ") || "상품"
+        } else {
+          const supabase = createServerClient()
+          if (supabase) {
+            const { data: items } = await supabase
+              .from("items")
+              .select("product_name")
+              .in("id", itemIds)
+            productName = items?.map((i) => i.product_name).join(", ") || "상품"
+          }
+        }
 
         // 통계 계산
         const totalReviews = reviews.length
@@ -117,16 +173,28 @@ export async function POST(request: NextRequest) {
         })
 
         // 분석 결과 캐싱
-        for (const itemId of itemIds) {
-          await supabase.from("review_analysis").upsert(
-            {
+        if (useLocalDB) {
+          for (const itemId of itemIds) {
+            await localDB.analysis.save({
               item_id: itemId,
-              summary: insights.overview,
-              positive_keywords: insights.pros,
-              negative_keywords: insights.cons,
-            },
-            { onConflict: "item_id" }
-          )
+              analysis_type: "insights",
+              result: insights,
+            })
+          }
+        } else {
+          const supabase = createServerClient()
+          if (supabase) {
+            for (const itemId of itemIds) {
+              await supabase.from("review_analysis").upsert(
+                {
+                  item_id: itemId,
+                  analysis_type: "insights",
+                  result: insights,
+                },
+                { onConflict: "item_id,analysis_type" }
+              )
+            }
+          }
         }
 
         return NextResponse.json(insights)
@@ -156,12 +224,21 @@ export async function POST(request: NextRequest) {
 // GET /api/analyze - 캐시된 분석 결과 조회
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createServerClient()
     const { searchParams } = new URL(request.url)
     const itemId = searchParams.get("itemId")
 
     if (!itemId) {
       return NextResponse.json({ error: "itemId required" }, { status: 400 })
+    }
+
+    if (useLocalDB) {
+      const analysis = await localDB.analysis.get(itemId, "insights")
+      return NextResponse.json(analysis || { analysis: null })
+    }
+
+    const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
     }
 
     const { data, error } = await supabase

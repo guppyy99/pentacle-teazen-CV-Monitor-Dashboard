@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@/lib/supabase"
+import { createServerClient, useLocalDB } from "@/lib/supabase"
+import { localDB } from "@/lib/local-db"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
 
@@ -10,7 +11,60 @@ export async function POST(
 ) {
   try {
     const { id } = await params
+
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const item = await localDB.items.getById(id)
+      if (!item) {
+        return NextResponse.json({ error: "Item not found" }, { status: 404 })
+      }
+
+      // 외부 크롤러 API 호출
+      console.log(`[LocalDB] Crawling item: ${item.product_name || item.url}`)
+      const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: item.url,
+          platform: item.platform,
+          itemId: id,
+        }),
+      })
+
+      if (!crawlerResponse.ok) {
+        const errorText = await crawlerResponse.text()
+        console.error("[LocalDB] Crawler API failed:", errorText)
+        return NextResponse.json(
+          { error: "Crawler API failed", details: errorText },
+          { status: 502 }
+        )
+      }
+
+      const crawledReviews = await crawlerResponse.json()
+      console.log(`[LocalDB] Received ${crawledReviews.length} reviews from crawler`)
+
+      // 로컬 DB에 리뷰 저장
+      const { inserted, skipped } = await localDB.reviews.bulkUpsert(id, crawledReviews)
+
+      // 마지막 크롤링 시간 업데이트
+      await localDB.items.updateLastCrawled(id)
+
+      console.log(`[LocalDB] Saved: ${inserted} inserted, ${skipped} skipped`)
+
+      return NextResponse.json({
+        success: true,
+        crawled: crawledReviews.length,
+        inserted,
+        skipped,
+        localDB: true,
+      })
+    }
+
+    // Supabase 모드
     const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+    }
 
     // 아이템 정보 조회
     const { data: item, error: itemError } = await supabase
@@ -70,7 +124,6 @@ export async function POST(
 
       if (insertError) {
         if (insertError.code === "23505") {
-          // Unique violation - skip
           skippedCount++
         } else {
           console.error("Review insert error:", insertError)
@@ -105,7 +158,27 @@ export async function GET(
 ) {
   try {
     const { id } = await params
+
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const item = await localDB.items.getById(id)
+      if (!item) {
+        return NextResponse.json({ error: "Item not found" }, { status: 404 })
+      }
+
+      const reviews = await localDB.reviews.getByItemId(id)
+
+      return NextResponse.json({
+        last_crawled_at: item.last_crawled_at,
+        review_count: reviews.length,
+        localDB: true,
+      })
+    }
+
     const supabase = createServerClient()
+    if (!supabase) {
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+    }
 
     const { data: item, error } = await supabase
       .from("items")

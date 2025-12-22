@@ -76,6 +76,7 @@ export interface CategoryStats {
   avgRating: number
   positiveRate: number
   negativeRate: number
+  color?: string
 }
 
 // AI 요약 응답
