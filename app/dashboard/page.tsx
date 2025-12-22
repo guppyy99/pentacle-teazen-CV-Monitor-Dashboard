@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import {
@@ -10,7 +11,7 @@ import {
   IconArrowUpRight,
   IconPlus,
   IconCategory,
-  IconRefresh,
+  IconLoader2,
 } from "@tabler/icons-react"
 import {
   Area,
@@ -32,36 +33,88 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
-import { mockCategories, mockItems, mockReviewStats } from "@/lib/mock-data"
+import { getCategories, getItems, getReviews } from "@/lib/api"
+import type { Category, Item, Review } from "@/types/database"
+
+interface ItemWithStats extends Item {
+  categories?: Category
+  review_count?: number
+  avg_rating?: number
+}
 
 export default function DashboardPage() {
+  const [categories, setCategories] = useState<Category[]>([])
+  const [items, setItems] = useState<ItemWithStats[]>([])
+  const [reviews, setReviews] = useState<Review[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const loadData = async () => {
+    try {
+      const [categoriesData, itemsData, reviewsData] = await Promise.all([
+        getCategories(),
+        getItems(),
+        getReviews({ limit: 100 }),
+      ])
+      setCategories(categoriesData)
+      setItems(itemsData)
+      setReviews(reviewsData.reviews || [])
+    } catch (error) {
+      console.error("Failed to load dashboard data:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // 통계 계산
-  const totalItems = mockItems.length
-  const totalReviews = mockItems.reduce((sum, item) => sum + item.reviewCount, 0)
-  const avgRating = mockItems.length > 0
-    ? (mockItems.reduce((sum, item) => sum + item.avgRating, 0) / mockItems.length).toFixed(1)
+  const totalItems = items.length
+  const totalReviews = items.reduce((sum, item) => sum + (item.review_count || 0), 0)
+  const avgRating = items.length > 0
+    ? (items.reduce((sum, item) => sum + (item.avg_rating || 0), 0) / items.length).toFixed(1)
     : "0"
-  const avgPositiveRate = mockReviewStats.length > 0
-    ? Math.round(mockReviewStats.reduce((sum, s) => sum + s.positiveRate, 0) / mockReviewStats.length)
+
+  // 긍정률 계산
+  const positiveReviews = reviews.filter(r => r.sentiment === "positive").length
+  const avgPositiveRate = reviews.length > 0
+    ? Math.round((positiveReviews / reviews.length) * 100)
     : 0
 
-  // 최근 리뷰 추이 데이터
-  const recentTrendData = [
-    { date: "12/14", reviews: 38 },
-    { date: "12/15", reviews: 53 },
-    { date: "12/16", reviews: 47 },
-    { date: "12/17", reviews: 78 },
-    { date: "12/18", reviews: 65 },
-    { date: "12/19", reviews: 87 },
-    { date: "12/20", reviews: 70 },
-  ]
+  // 최근 7일 리뷰 추이 데이터 계산
+  const recentTrendData = (() => {
+    const days: Record<string, number> = {}
+    const today = new Date()
+
+    // 최근 7일 날짜 초기화
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(d.getDate() - i)
+      const key = `${d.getMonth() + 1}/${d.getDate()}`
+      days[key] = 0
+    }
+
+    // 리뷰 날짜별 카운트
+    reviews.forEach(r => {
+      if (r.date) {
+        const d = new Date(r.date)
+        const key = `${d.getMonth() + 1}/${d.getDate()}`
+        if (days[key] !== undefined) {
+          days[key]++
+        }
+      }
+    })
+
+    return Object.entries(days).map(([date, count]) => ({ date, reviews: count }))
+  })()
 
   // 카테고리별 통계
-  const categoryStats = mockCategories.map(cat => {
-    const categoryItems = mockItems.filter(item => item.categoryId === cat.id)
-    const totalReviews = categoryItems.reduce((sum, item) => sum + item.reviewCount, 0)
+  const categoryStats = categories.map(cat => {
+    const categoryItems = items.filter(item => item.category_id === cat.id)
+    const totalReviews = categoryItems.reduce((sum, item) => sum + (item.review_count || 0), 0)
     const avgRating = categoryItems.length > 0
-      ? categoryItems.reduce((sum, item) => sum + item.avgRating, 0) / categoryItems.length
+      ? categoryItems.reduce((sum, item) => sum + (item.avg_rating || 0), 0) / categoryItems.length
       : 0
     return {
       ...cat,
@@ -72,9 +125,31 @@ export default function DashboardPage() {
   })
 
   // 최근 크롤링 아이템
-  const recentItems = [...mockItems]
-    .sort((a, b) => new Date(b.lastCrawledAt || 0).getTime() - new Date(a.lastCrawledAt || 0).getTime())
+  const recentItems = [...items]
+    .sort((a, b) => new Date(b.last_crawled_at || 0).getTime() - new Date(a.last_crawled_at || 0).getTime())
     .slice(0, 4)
+
+  if (loading) {
+    return (
+      <SidebarProvider
+        className="h-full"
+        style={
+          {
+            "--sidebar-width": "280px",
+            "--header-height": "60px",
+          } as React.CSSProperties
+        }
+      >
+        <AppSidebar variant="inset" />
+        <SidebarInset className="flex flex-col h-full">
+          <SiteHeader />
+          <main className="flex-1 flex items-center justify-center">
+            <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    )
+  }
 
   return (
     <SidebarProvider
@@ -119,7 +194,7 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="text-2xl font-bold">{totalItems}개</div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {mockCategories.length}개 카테고리
+                    {categories.length}개 카테고리
                   </p>
                 </CardContent>
               </Card>
@@ -134,7 +209,7 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="text-2xl font-bold">{totalReviews.toLocaleString()}건</div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    오늘 +70건
+                    전체 리뷰 수
                   </p>
                 </CardContent>
               </Card>
@@ -164,7 +239,7 @@ export default function DashboardPage() {
                 <CardContent>
                   <div className="text-2xl font-bold text-green-600">{avgPositiveRate}%</div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    전주 대비 +2.3%
+                    감정 분석 기준
                   </p>
                 </CardContent>
               </Card>
@@ -213,29 +288,35 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {categoryStats.map((cat) => (
-                      <div key={cat.id} className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="h-3 w-3 rounded-full"
-                            style={{ backgroundColor: cat.color }}
-                          />
-                          <div>
-                            <p className="font-medium">{cat.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {cat.itemCount}개 아이템
+                    {categoryStats.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        등록된 카테고리가 없습니다
+                      </p>
+                    ) : (
+                      categoryStats.map((cat) => (
+                        <div key={cat.id} className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="h-3 w-3 rounded-full"
+                              style={{ backgroundColor: cat.color || "#888" }}
+                            />
+                            <div>
+                              <p className="font-medium">{cat.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {cat.itemCount}개 아이템
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium">{cat.reviewCount.toLocaleString()}건</p>
+                            <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
+                              <IconStar className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              {cat.avgRating}
                             </p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-medium">{cat.reviewCount.toLocaleString()}건</p>
-                          <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
-                            <IconStar className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            {cat.avgRating}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -258,41 +339,56 @@ export default function DashboardPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {recentItems.map((item) => {
-                    const category = mockCategories.find(c => c.id === item.categoryId)
-                    return (
-                      <Link href="/reviews" key={item.id}>
+                {recentItems.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <IconPackage className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                    <p>등록된 아이템이 없습니다</p>
+                    <Button variant="outline" size="sm" className="mt-4" asChild>
+                      <Link href="/items">아이템 추가하기</Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {recentItems.map((item) => (
+                      <Link href={`/reviews?itemId=${item.id}`} key={item.id}>
                         <div className="group flex gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50">
                           <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md bg-muted">
-                            <Image
-                              src={item.productImage}
-                              alt={item.productName}
-                              fill
-                              className="object-cover"
-                              unoptimized
-                            />
+                            {item.product_image ? (
+                              <Image
+                                src={item.product_image}
+                                alt={item.product_name || "상품"}
+                                fill
+                                className="object-cover"
+                                unoptimized
+                              />
+                            ) : (
+                              <div className="flex items-center justify-center h-full">
+                                <IconPackage className="h-6 w-6 text-muted-foreground" />
+                              </div>
+                            )}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium line-clamp-2 group-hover:text-primary">
-                              {item.productName}
+                              {item.product_name || "상품명 없음"}
                             </p>
                             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                              <Badge
-                                variant="outline"
-                                className="text-xs"
-                                style={{ borderColor: category?.color }}
-                              >
-                                {category?.name}
-                              </Badge>
-                              <span>{item.reviewCount.toLocaleString()}건</span>
+                              {item.categories && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs"
+                                  style={{ borderColor: item.categories.color || "#888" }}
+                                >
+                                  {item.categories.name}
+                                </Badge>
+                              )}
+                              <span>{(item.review_count || 0).toLocaleString()}건</span>
                             </div>
                           </div>
                         </div>
                       </Link>
-                    )
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

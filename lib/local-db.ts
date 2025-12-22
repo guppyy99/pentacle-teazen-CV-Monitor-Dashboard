@@ -341,6 +341,29 @@ export const localReviews = {
       avgRating: Math.round(avgRating * 10) / 10,
     }
   },
+
+  async updateSentiment(reviewId: string, sentiment: "positive" | "negative" | "neutral"): Promise<boolean> {
+    const db = readDB()
+    const index = db.reviews.findIndex((r) => r.id === reviewId)
+    if (index === -1) return false
+    db.reviews[index].sentiment = sentiment
+    writeDB(db)
+    return true
+  },
+
+  async bulkUpdateSentiment(updates: Array<{ id: string; sentiment: "positive" | "negative" | "neutral" }>): Promise<number> {
+    const db = readDB()
+    let updated = 0
+    for (const { id, sentiment } of updates) {
+      const index = db.reviews.findIndex((r) => r.id === id)
+      if (index !== -1) {
+        db.reviews[index].sentiment = sentiment
+        updated++
+      }
+    }
+    writeDB(db)
+    return updated
+  },
 }
 
 // ============================================================
