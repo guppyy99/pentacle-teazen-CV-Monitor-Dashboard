@@ -1,21 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createServerClient, useMockData } from "@/lib/supabase"
+import { createServerClient, useLocalDB } from "@/lib/supabase"
+import { localDB } from "@/lib/local-db"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
-
-// Mock 아이템 데이터 (테스트용)
-const mockItems: Record<string, { url: string; platform: string; name: string }> = {
-  "1": {
-    url: "https://smartstore.naver.com/sanofit/products/5686164269",
-    platform: "naver",
-    name: "티젠 콤부차 레몬",
-  },
-  "2": {
-    url: "https://smartstore.naver.com/example/products/123",
-    platform: "naver",
-    name: "테스트 상품 2",
-  },
-}
 
 // POST /api/items/[id]/crawl - 아이템 리뷰 크롤링 실행
 export async function POST(
@@ -25,42 +12,55 @@ export async function POST(
   try {
     const { id } = await params
 
-    // Mock 모드일 때
-    if (useMockData) {
-      const mockItem = mockItems[id] || mockItems["1"]
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const item = await localDB.items.getById(id)
+      if (!item) {
+        return NextResponse.json({ error: "Item not found" }, { status: 404 })
+      }
 
-      // Mock 크롤러 API 호출
+      // 외부 크롤러 API 호출
+      console.log(`[LocalDB] Crawling item: ${item.product_name || item.url}`)
       const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: mockItem.url,
-          platform: mockItem.platform,
+          url: item.url,
+          platform: item.platform,
           itemId: id,
         }),
       })
 
       if (!crawlerResponse.ok) {
+        const errorText = await crawlerResponse.text()
+        console.error("[LocalDB] Crawler API failed:", errorText)
         return NextResponse.json(
-          { error: "Crawler API failed (mock)" },
+          { error: "Crawler API failed", details: errorText },
           { status: 502 }
         )
       }
 
       const crawledReviews = await crawlerResponse.json()
+      console.log(`[LocalDB] Received ${crawledReviews.length} reviews from crawler`)
 
-      // Mock 모드에서는 실제 DB 저장 안함
-      console.log(`[Mock] Crawled ${crawledReviews.length} reviews for item ${id}`)
+      // 로컬 DB에 리뷰 저장
+      const { inserted, skipped } = await localDB.reviews.bulkUpsert(id, crawledReviews)
+
+      // 마지막 크롤링 시간 업데이트
+      await localDB.items.updateLastCrawled(id)
+
+      console.log(`[LocalDB] Saved: ${inserted} inserted, ${skipped} skipped`)
 
       return NextResponse.json({
         success: true,
         crawled: crawledReviews.length,
-        inserted: crawledReviews.length,
-        skipped: 0,
-        mockMode: true,
+        inserted,
+        skipped,
+        localDB: true,
       })
     }
 
+    // Supabase 모드
     const supabase = createServerClient()
     if (!supabase) {
       return NextResponse.json({ error: "Database not configured" }, { status: 503 })
@@ -124,7 +124,6 @@ export async function POST(
 
       if (insertError) {
         if (insertError.code === "23505") {
-          // Unique violation - skip
           skippedCount++
         } else {
           console.error("Review insert error:", insertError)
@@ -160,12 +159,19 @@ export async function GET(
   try {
     const { id } = await params
 
-    // Mock 모드일 때
-    if (useMockData) {
+    // 로컬 DB 모드
+    if (useLocalDB) {
+      const item = await localDB.items.getById(id)
+      if (!item) {
+        return NextResponse.json({ error: "Item not found" }, { status: 404 })
+      }
+
+      const reviews = await localDB.reviews.getByItemId(id)
+
       return NextResponse.json({
-        last_crawled_at: new Date().toISOString(),
-        review_count: Math.floor(Math.random() * 50) + 10,
-        mockMode: true,
+        last_crawled_at: item.last_crawled_at,
+        review_count: reviews.length,
+        localDB: true,
       })
     }
 
