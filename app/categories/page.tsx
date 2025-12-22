@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   IconStar,
   IconMessage,
@@ -27,7 +27,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Select,
@@ -38,14 +37,19 @@ import {
 } from "@/components/ui/select"
 
 import type { CategoryStats } from "@/types"
+import { DATE_RANGE_OPTIONS, type DateRange } from "@/lib/mock-data"
 import {
-  mockCategories,
-  mockItems,
-  mockReviewStats,
-  getCategoryDailyReviews,
-  DATE_RANGE_OPTIONS,
-  type DateRange
-} from "@/lib/mock-data"
+  getCategories,
+  getItems,
+  getReviews,
+  analyzeReviews,
+  type CategoryData,
+  type ItemData,
+  type ReviewData,
+} from "@/lib/api"
+
+// 기본 색상 팔레트
+const DEFAULT_COLORS = ["#4ECDC4", "#FF6B6B", "#45B7D1", "#96CEB4", "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F"]
 
 export default function CategoriesPage() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([])
@@ -53,24 +57,55 @@ export default function CategoriesPage() {
   const [isGeneratingAI, setIsGeneratingAI] = useState(false)
   const [aiSummary, setAiSummary] = useState<string | null>(null)
 
+  // API 데이터 상태
+  const [categories, setCategories] = useState<CategoryData[]>([])
+  const [items, setItems] = useState<ItemData[]>([])
+  const [reviews, setReviews] = useState<ReviewData[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  // 데이터 로드
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setIsLoading(true)
+        const [categoriesData, itemsData, reviewsData] = await Promise.all([
+          getCategories(),
+          getItems(),
+          getReviews({ limit: 1000 }),
+        ])
+
+        setCategories(categoriesData)
+        setItems(itemsData)
+        setReviews(reviewsData.reviews)
+      } catch (error) {
+        console.error("Failed to load data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
+  }, [])
+
   // 카테고리별 통계 계산
   const categoryStats: CategoryStats[] = useMemo(() => {
-    return mockCategories.map((category) => {
-      const categoryItems = mockItems.filter(item => item.categoryId === category.id)
+    return categories.map((category, index) => {
+      const categoryItems = items.filter(item => item.category_id === category.id)
       const itemIds = categoryItems.map(item => item.id)
-      const stats = mockReviewStats.filter(s => itemIds.includes(s.itemId))
+      const categoryReviews = reviews.filter(r => itemIds.includes(r.item_id))
 
-      const totalReviews = categoryItems.reduce((sum, item) => sum + item.reviewCount, 0)
-      const avgRating = categoryItems.length > 0
-        ? categoryItems.reduce((sum, item) => sum + item.avgRating, 0) / categoryItems.length
+      const totalReviews = categoryReviews.length
+      const avgRating = categoryReviews.length > 0
+        ? categoryReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / categoryReviews.length
         : 0
 
-      const avgPositive = stats.length > 0
-        ? stats.reduce((sum, s) => sum + s.positiveRate, 0) / stats.length
-        : 70
-      const avgNegative = stats.length > 0
-        ? stats.reduce((sum, s) => sum + s.negativeRate, 0) / stats.length
-        : 15
+      const positiveCount = categoryReviews.filter(r => r.sentiment === "positive").length
+      const negativeCount = categoryReviews.filter(r => r.sentiment === "negative").length
+      const neutralCount = categoryReviews.filter(r => r.sentiment === "neutral").length
+      const analyzedCount = positiveCount + negativeCount + neutralCount
+
+      const positiveRate = analyzedCount > 0 ? Math.round((positiveCount / analyzedCount) * 100) : 0
+      const negativeRate = analyzedCount > 0 ? Math.round((negativeCount / analyzedCount) * 100) : 0
 
       return {
         categoryId: category.id,
@@ -78,11 +113,12 @@ export default function CategoriesPage() {
         itemCount: categoryItems.length,
         totalReviews,
         avgRating: Math.round(avgRating * 10) / 10,
-        positiveRate: Math.round(avgPositive),
-        negativeRate: Math.round(avgNegative),
+        positiveRate,
+        negativeRate,
+        color: category.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
       }
     })
-  }, [])
+  }, [categories, items, reviews])
 
   // 카테고리 선택 토글
   const toggleCategory = (categoryId: string) => {
@@ -96,10 +132,10 @@ export default function CategoriesPage() {
 
   // 전체 선택/해제
   const toggleAll = () => {
-    if (selectedCategories.length === mockCategories.length) {
+    if (selectedCategories.length === categories.length) {
       setSelectedCategories([])
     } else {
-      setSelectedCategories(mockCategories.map(c => c.id))
+      setSelectedCategories(categories.map(c => c.id))
     }
     setAiSummary(null)
   }
@@ -110,49 +146,54 @@ export default function CategoriesPage() {
   )
 
   // 비교 차트 데이터
-  const comparisonChartData = selectedStats.map(stat => {
-    const category = mockCategories.find(c => c.id === stat.categoryId)
-    return {
-      name: stat.categoryName,
-      리뷰수: stat.totalReviews,
-      평균별점: stat.avgRating,
-      color: category?.color || "#888",
-    }
-  })
+  const comparisonChartData = selectedStats.map(stat => ({
+    name: stat.categoryName,
+    리뷰수: stat.totalReviews,
+    평균별점: stat.avgRating,
+    color: stat.color,
+  }))
 
   // 감정 비율 차트 데이터
-  const sentimentChartData = selectedStats.map(stat => {
-    const category = mockCategories.find(c => c.id === stat.categoryId)
-    return {
-      name: stat.categoryName,
-      긍정: stat.positiveRate,
-      부정: stat.negativeRate,
-      중립: 100 - stat.positiveRate - stat.negativeRate,
-      color: category?.color || "#888",
-    }
-  })
+  const sentimentChartData = selectedStats.map(stat => ({
+    name: stat.categoryName,
+    긍정: stat.positiveRate,
+    부정: stat.negativeRate,
+    중립: 100 - stat.positiveRate - stat.negativeRate,
+    color: stat.color,
+  }))
 
-  // 리뷰 추이 데이터
+  // 리뷰 추이 데이터 (날짜 범위에 따른 일별 리뷰 수)
   const trendChartData = useMemo(() => {
     if (selectedCategories.length === 0) return []
 
-    // 첫 번째 선택된 카테고리의 날짜를 기준으로
-    const firstCategoryData = getCategoryDailyReviews(selectedCategories[0], dateRange)
+    const days = dateRange === "7d" ? 7 : dateRange === "1m" ? 30 : 90
+    const now = new Date()
+    const dates: string[] = []
 
-    return firstCategoryData.map((item, index) => {
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now)
+      date.setDate(date.getDate() - i)
+      dates.push(date.toISOString().split("T")[0])
+    }
+
+    return dates.map(date => {
       const dataPoint: Record<string, any> = {
-        date: item.date.substring(5), // MM-DD
+        date: date.substring(5), // MM-DD
       }
 
       selectedCategories.forEach(catId => {
-        const category = mockCategories.find(c => c.id === catId)
-        const categoryData = getCategoryDailyReviews(catId, dateRange)
-        dataPoint[category?.name || catId] = categoryData[index]?.count || 0
+        const category = categories.find(c => c.id === catId)
+        const categoryItems = items.filter(item => item.category_id === catId)
+        const itemIds = categoryItems.map(item => item.id)
+        const dayReviews = reviews.filter(r =>
+          itemIds.includes(r.item_id) && r.date?.startsWith(date)
+        )
+        dataPoint[category?.name || catId] = dayReviews.length
       })
 
       return dataPoint
     })
-  }, [selectedCategories, dateRange])
+  }, [selectedCategories, dateRange, categories, items, reviews])
 
   // AI 요약 생성
   const handleGenerateAI = async () => {
@@ -161,33 +202,85 @@ export default function CategoriesPage() {
     setIsGeneratingAI(true)
     setAiSummary(null)
 
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    try {
+      // 선택된 카테고리의 아이템 ID들 수집
+      const selectedItemIds: string[] = []
+      selectedCategories.forEach(catId => {
+        const categoryItems = items.filter(item => item.category_id === catId)
+        selectedItemIds.push(...categoryItems.map(item => item.id))
+      })
 
-    const selectedNames = selectedStats.map(s => s.categoryName).join(", ")
-    const mockSummary = `## ${selectedNames} 카테고리 리뷰 분석 요약
+      if (selectedItemIds.length === 0) {
+        setAiSummary("선택된 카테고리에 아이템이 없습니다.")
+        return
+      }
 
-### 주요 인사이트
+      // AI 분석 API 호출
+      const result = await analyzeReviews({
+        itemIds: selectedItemIds,
+        type: "insights",
+        dateRange,
+      })
+
+      if ("overview" in result) {
+        const selectedNames = selectedStats.map(s => s.categoryName).join(", ")
+        const summary = `## ${selectedNames} 카테고리 리뷰 분석 요약
+
+### 개요
+${result.overview}
+
+### 주요 통계
 ${selectedStats.map(s => `- **${s.categoryName}**: 총 ${s.totalReviews.toLocaleString()}건의 리뷰, 평균 ${s.avgRating}점, 긍정률 ${s.positiveRate}%`).join("\n")}
 
 ### 긍정적 반응
-- 맛과 품질에 대한 만족도가 높음
-- 가격 대비 성능이 우수하다는 평가
-- 재구매 의향이 높은 편
+${result.pros.map(p => `- ${p}`).join("\n")}
 
 ### 개선 필요 사항
-- 일부 제품의 포장 상태 개선 필요
-- 배송 속도에 대한 불만 일부 존재
-- 맛 선호도 다양화 요청
+${result.cons.map(c => `- ${c}`).join("\n")}
 
-### 경쟁사 대비 포지션
-${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b) => a.avgRating > b.avgRating ? a : b).categoryName} (${selectedStats.reduce((a, b) => a.avgRating > b.avgRating ? a : b).avgRating}점)` : "다른 카테고리와 비교하려면 여러 카테고리를 선택하세요."}
+### 권장 조치사항
+${result.actions.map(a => `- **${a.title}** (${a.priority}): ${a.detail}`).join("\n")}
+
+### 리스크 요인
+${result.risks.map(r => `- ${r}`).join("\n")}
 `
+        setAiSummary(summary)
+      }
+    } catch (error) {
+      console.error("AI analysis failed:", error)
 
-    setAiSummary(mockSummary)
-    setIsGeneratingAI(false)
+      // Fallback: 기본 통계 기반 요약
+      const selectedNames = selectedStats.map(s => s.categoryName).join(", ")
+      const fallbackSummary = `## ${selectedNames} 카테고리 리뷰 분석 요약
+
+### 주요 통계
+${selectedStats.map(s => `- **${s.categoryName}**: 총 ${s.totalReviews.toLocaleString()}건의 리뷰, 평균 ${s.avgRating}점, 긍정률 ${s.positiveRate}%`).join("\n")}
+
+### 분석 결과
+${selectedStats.length > 1
+  ? `가장 높은 평점: ${selectedStats.reduce((a, b) => a.avgRating > b.avgRating ? a : b).categoryName} (${selectedStats.reduce((a, b) => a.avgRating > b.avgRating ? a : b).avgRating}점)
+가장 높은 긍정률: ${selectedStats.reduce((a, b) => a.positiveRate > b.positiveRate ? a : b).categoryName} (${selectedStats.reduce((a, b) => a.positiveRate > b.positiveRate ? a : b).positiveRate}%)`
+  : "다른 카테고리와 비교하려면 여러 카테고리를 선택하세요."}
+
+*참고: AI 분석 서비스에 연결할 수 없어 기본 통계만 표시됩니다.*
+`
+      setAiSummary(fallbackSummary)
+    } finally {
+      setIsGeneratingAI(false)
+    }
   }
 
   const chartColors = ["#4ECDC4", "#FF6B6B", "#45B7D1", "#96CEB4"]
+
+  if (isLoading) {
+    return (
+      <PageLayout>
+        <div className="flex items-center justify-center h-96">
+          <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </PageLayout>
+    )
+  }
 
   return (
     <PageLayout>
@@ -219,48 +312,55 @@ ${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">카테고리 선택</CardTitle>
                 <Button variant="ghost" size="sm" onClick={toggleAll}>
-                  {selectedCategories.length === mockCategories.length ? "전체 해제" : "전체 선택"}
+                  {selectedCategories.length === categories.length ? "전체 해제" : "전체 선택"}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {mockCategories.map((category) => {
-                  const stat = categoryStats.find(s => s.categoryId === category.id)
-                  const isSelected = selectedCategories.includes(category.id)
+              {categories.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  등록된 카테고리가 없습니다
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {categories.map((category, index) => {
+                    const stat = categoryStats.find(s => s.categoryId === category.id)
+                    const isSelected = selectedCategories.includes(category.id)
+                    const color = category.color || DEFAULT_COLORS[index % DEFAULT_COLORS.length]
 
-                  return (
-                    <div
-                      key={category.id}
-                      className={`flex items-start gap-3 rounded-lg border p-3 transition-colors cursor-pointer hover:bg-muted/50 ${
-                        isSelected ? "border-primary bg-muted/30" : ""
-                      }`}
-                      onClick={() => toggleCategory(category.id)}
-                    >
-                      <Checkbox
-                        id={category.id}
-                        checked={isSelected}
-                        className="mt-0.5"
-                      />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="h-3 w-3 rounded-full"
-                            style={{ backgroundColor: category.color }}
-                          />
-                          <Label htmlFor={category.id} className="font-medium cursor-pointer">
-                            {category.name}
-                          </Label>
-                        </div>
-                        <div className="flex gap-3 text-xs text-muted-foreground">
-                          <span>아이템 {stat?.itemCount}개</span>
-                          <span>리뷰 {stat?.totalReviews.toLocaleString()}건</span>
+                    return (
+                      <div
+                        key={category.id}
+                        className={`flex items-start gap-3 rounded-lg border p-3 transition-colors cursor-pointer hover:bg-muted/50 ${
+                          isSelected ? "border-primary bg-muted/30" : ""
+                        }`}
+                        onClick={() => toggleCategory(category.id)}
+                      >
+                        <Checkbox
+                          id={category.id}
+                          checked={isSelected}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-3 w-3 rounded-full"
+                              style={{ backgroundColor: color }}
+                            />
+                            <Label htmlFor={category.id} className="font-medium cursor-pointer">
+                              {category.name}
+                            </Label>
+                          </div>
+                          <div className="flex gap-3 text-xs text-muted-foreground">
+                            <span>아이템 {stat?.itemCount || 0}개</span>
+                            <span>리뷰 {(stat?.totalReviews || 0).toLocaleString()}건</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
 
               {selectedCategories.length > 0 && (
                 <Button
@@ -332,7 +432,9 @@ ${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {(selectedStats.reduce((sum, s) => sum + s.avgRating, 0) / selectedStats.length).toFixed(1)}점
+                        {selectedStats.length > 0
+                          ? (selectedStats.reduce((sum, s) => sum + s.avgRating, 0) / selectedStats.length).toFixed(1)
+                          : "0.0"}점
                       </div>
                     </CardContent>
                   </Card>
@@ -347,7 +449,9 @@ ${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold text-green-600">
-                        {Math.round(selectedStats.reduce((sum, s) => sum + s.positiveRate, 0) / selectedStats.length)}%
+                        {selectedStats.length > 0
+                          ? Math.round(selectedStats.reduce((sum, s) => sum + s.positiveRate, 0) / selectedStats.length)
+                          : 0}%
                       </div>
                     </CardContent>
                   </Card>
@@ -384,7 +488,7 @@ ${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b
                               <Tooltip />
                               <Legend />
                               {selectedCategories.map((catId, index) => {
-                                const category = mockCategories.find(c => c.id === catId)
+                                const category = categories.find(c => c.id === catId)
                                 return (
                                   <Area
                                     key={catId}
@@ -499,6 +603,9 @@ ${selectedStats.length > 1 ? `가장 높은 평점: ${selectedStats.reduce((a, b
                           }
                           if (line.startsWith("- ")) {
                             return <li key={i} className="ml-4">{line.replace(/^-\s*/, "").replace(/\*\*(.*?)\*\*/g, "$1")}</li>
+                          }
+                          if (line.startsWith("*")) {
+                            return <p key={i} className="text-muted-foreground italic">{line.replace(/^\*/, "").replace(/\*$/, "")}</p>
                           }
                           return line ? <p key={i}>{line}</p> : null
                         })}
