@@ -3,6 +3,23 @@ import { createServerClient, useLocalDB } from "@/lib/supabase"
 import { localDB } from "@/lib/local-db"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
+const CRAWLER_TIMEOUT = 120000 // 2분 (크롤링은 시간이 오래 걸릴 수 있음)
+
+// 타임아웃이 있는 fetch 헬퍼
+async function fetchWithTimeout(url: string, options: RequestInit, timeout: number): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    return response
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 // POST /api/items/[id]/crawl - 아이템 리뷰 크롤링 실행
 export async function POST(
@@ -21,15 +38,19 @@ export async function POST(
 
       // 외부 크롤러 API 호출
       console.log(`[LocalDB] Crawling item: ${item.product_name || item.url}`)
-      const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: item.url,
-          platform: item.platform,
-          itemId: id,
-        }),
-      })
+      const crawlerResponse = await fetchWithTimeout(
+        `${CRAWLER_API_URL}/crawl/reviews`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: item.url,
+            platform: item.platform,
+            itemId: id,
+          }),
+        },
+        CRAWLER_TIMEOUT
+      )
 
       if (!crawlerResponse.ok) {
         const errorText = await crawlerResponse.text()
@@ -78,17 +99,19 @@ export async function POST(
     }
 
     // 외부 크롤러 API 호출
-    const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const crawlerResponse = await fetchWithTimeout(
+      `${CRAWLER_API_URL}/crawl/reviews`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: item.url,
+          platform: item.platform,
+          itemId: id,
+        }),
       },
-      body: JSON.stringify({
-        url: item.url,
-        platform: item.platform,
-        itemId: id,
-      }),
-    })
+      CRAWLER_TIMEOUT
+    )
 
     if (!crawlerResponse.ok) {
       const errorData = await crawlerResponse.json().catch(() => ({}))
@@ -147,6 +170,9 @@ export async function POST(
     })
   } catch (error) {
     console.error("Crawl API error:", error)
+    if (error instanceof Error && error.name === "AbortError") {
+      return NextResponse.json({ error: "Crawler request timeout" }, { status: 504 })
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

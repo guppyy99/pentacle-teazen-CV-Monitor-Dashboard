@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from "next/server"
 import { detectPlatform } from "@/types"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
+const EXTRACT_TIMEOUT = 30000 // 30초
+
+// 타임아웃이 있는 fetch 헬퍼
+async function fetchWithTimeout(url: string, options: RequestInit, timeout: number): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 // POST /api/items/extract - URL에서 상품 메타데이터 추출
 export async function POST(request: NextRequest) {
@@ -20,13 +33,15 @@ export async function POST(request: NextRequest) {
     }
 
     // 외부 크롤러 API 호출
-    const crawlerResponse = await fetch(`${CRAWLER_API_URL}/extract/metadata`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const crawlerResponse = await fetchWithTimeout(
+      `${CRAWLER_API_URL}/extract/metadata`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
       },
-      body: JSON.stringify({ url }),
-    })
+      EXTRACT_TIMEOUT
+    )
 
     if (!crawlerResponse.ok) {
       // 크롤러 실패 시 기본값 반환
@@ -49,6 +64,15 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error("Extract API error:", error)
+    if (error instanceof Error && error.name === "AbortError") {
+      // 타임아웃 시에도 기본값 반환
+      return NextResponse.json({
+        platform: null,
+        product_name: null,
+        product_image: null,
+        price: null,
+      })
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

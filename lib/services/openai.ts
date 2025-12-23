@@ -1,7 +1,11 @@
 import OpenAI from "openai"
 
+const OPENAI_TIMEOUT = 60000 // 60초
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  timeout: OPENAI_TIMEOUT,
+  maxRetries: 2,
 })
 
 // 리뷰 1건 감정 분석 및 태깅

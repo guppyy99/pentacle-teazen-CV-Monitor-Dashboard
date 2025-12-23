@@ -1,26 +1,42 @@
 // API Helper Functions for Frontend
 
 const BASE_URL = ""
+const DEFAULT_TIMEOUT = 30000 // 30초
 
-// Generic fetch wrapper with error handling
+// Generic fetch wrapper with error handling and timeout
 async function fetchAPI<T>(
   endpoint: string,
-  options?: RequestInit
+  options?: RequestInit & { timeout?: number }
 ): Promise<T> {
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  })
+  const { timeout = DEFAULT_TIMEOUT, ...fetchOptions } = options || {}
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: "Unknown error" }))
-    throw new Error(error.error || `HTTP ${response.status}`)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    const response = await fetch(`${BASE_URL}${endpoint}`, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...fetchOptions?.headers,
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Unknown error" }))
+      throw new Error(error.error || `HTTP ${response.status}`)
+    }
+
+    return response.json()
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Request timeout")
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
   }
-
-  return response.json()
 }
 
 // ============ Categories ============
