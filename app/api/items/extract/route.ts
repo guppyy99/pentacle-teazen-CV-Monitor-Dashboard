@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { detectPlatform } from "@/types"
+import { metadataCache } from "@/lib/utils/cache"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
 const EXTRACT_TIMEOUT = 30000 // 30초
@@ -24,6 +25,14 @@ export async function POST(request: NextRequest) {
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 })
+    }
+
+    // 캐시 확인
+    const cacheKey = `metadata:${url}`
+    const cached = metadataCache.get(cacheKey)
+    if (cached) {
+      console.log(`[Cache] Using cached metadata for URL: ${url}`)
+      return NextResponse.json(cached)
     }
 
     // 플랫폼 감지
@@ -56,12 +65,17 @@ export async function POST(request: NextRequest) {
 
     const metadata = await crawlerResponse.json()
 
-    return NextResponse.json({
+    const result = {
       platform: metadata.platform || platform,
       product_name: metadata.name || null,
       product_image: metadata.image || null,
       price: metadata.price || null,
-    })
+    }
+
+    // 캐시에 저장
+    metadataCache.set(cacheKey, result)
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error("Extract API error:", error)
     if (error instanceof Error && error.name === "AbortError") {
