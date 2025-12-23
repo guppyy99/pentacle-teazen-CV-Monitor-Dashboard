@@ -1,8 +1,19 @@
 import OpenAI from "openai"
+import { openaiRateLimiter } from "@/lib/utils/rate-limiter"
+
+const OPENAI_TIMEOUT = 60000 // 60초
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  timeout: OPENAI_TIMEOUT,
+  maxRetries: 2,
 })
+
+// Rate Limit 적용된 API 호출 래퍼
+async function withRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+  await openaiRateLimiter.acquire()
+  return fn()
+}
 
 // 리뷰 1건 감정 분석 및 태깅
 export async function tagReview(review: {
@@ -13,7 +24,7 @@ export async function tagReview(review: {
   source?: string
 }) {
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await withRateLimit(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       max_tokens: 1000,
@@ -39,7 +50,7 @@ export async function tagReview(review: {
         },
       ],
       response_format: { type: "json_object" },
-    })
+    }))
 
     const content = completion.choices[0].message.content
     if (!content) throw new Error("No response from OpenAI")
@@ -96,7 +107,7 @@ export async function generateInsights(params: {
   }>
 }) {
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await withRateLimit(() => openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 0.7,
       max_tokens: 2000,
@@ -132,7 +143,7 @@ export async function generateInsights(params: {
         },
       ],
       response_format: { type: "json_object" },
-    })
+    }))
 
     const content = completion.choices[0].message.content
     if (!content) throw new Error("No response from OpenAI")
@@ -154,7 +165,7 @@ export async function generateInsights(params: {
 // 키워드 추출
 export async function extractKeywords(reviews: Array<{ content: string; sentiment: string }>) {
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await withRateLimit(() => openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
       max_tokens: 1000,
@@ -177,7 +188,7 @@ export async function extractKeywords(reviews: Array<{ content: string; sentimen
         },
       ],
       response_format: { type: "json_object" },
-    })
+    }))
 
     const content = completion.choices[0].message.content
     if (!content) throw new Error("No response from OpenAI")

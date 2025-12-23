@@ -24,4 +24,11 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts.data/
+next-env.d.ts
+
+# local data
+.data/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -252,6 +252,7 @@ export const localReviews = {
     images?: string[]
     date?: string
     sentiment?: string
+    keywords?: string[]
   }): Promise<{ inserted: boolean; review: Review }> {
     const db = readDB()
 
@@ -277,6 +278,7 @@ export const localReviews = {
       images: data.images || [],
       date: data.date || null,
       sentiment: data.sentiment as "positive" | "negative" | "neutral" | null || null,
+      keywords: data.keywords || null,
       crawled_at: new Date().toISOString(),
     }
     db.reviews.push(newReview)
@@ -293,6 +295,7 @@ export const localReviews = {
       images?: string[]
       date?: string
       sentiment?: string
+      keywords?: string[]
     }>
   ): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0
@@ -363,6 +366,68 @@ export const localReviews = {
     }
     writeDB(db)
     return updated
+  },
+
+  async updateKeywords(reviewId: string, keywords: string[]): Promise<boolean> {
+    const db = readDB()
+    const index = db.reviews.findIndex((r) => r.id === reviewId)
+    if (index === -1) return false
+    db.reviews[index].keywords = keywords
+    writeDB(db)
+    return true
+  },
+
+  async bulkUpdateAnalysis(updates: Array<{ id: string; sentiment: "positive" | "negative" | "neutral"; keywords: string[] }>): Promise<number> {
+    const db = readDB()
+    let updated = 0
+    for (const { id, sentiment, keywords } of updates) {
+      const index = db.reviews.findIndex((r) => r.id === id)
+      if (index !== -1) {
+        db.reviews[index].sentiment = sentiment
+        db.reviews[index].keywords = keywords
+        updated++
+      }
+    }
+    writeDB(db)
+    return updated
+  },
+
+  async getKeywordStats(itemIds?: string[]): Promise<{ positive: { word: string; count: number }[]; negative: { word: string; count: number }[] }> {
+    const db = readDB()
+    let reviews = db.reviews
+
+    if (itemIds && itemIds.length > 0) {
+      reviews = reviews.filter(r => itemIds.includes(r.item_id))
+    }
+
+    const positiveKeywords: Record<string, number> = {}
+    const negativeKeywords: Record<string, number> = {}
+
+    reviews.forEach(review => {
+      if (!review.keywords || review.keywords.length === 0) return
+
+      const target = review.sentiment === "positive"
+        ? positiveKeywords
+        : review.sentiment === "negative"
+        ? negativeKeywords
+        : null
+
+      if (target) {
+        review.keywords.forEach(kw => {
+          target[kw] = (target[kw] || 0) + 1
+        })
+      }
+    })
+
+    const toSortedList = (obj: Record<string, number>) =>
+      Object.entries(obj)
+        .map(([word, count]) => ({ word, count }))
+        .sort((a, b) => b.count - a.count)
+
+    return {
+      positive: toSortedList(positiveKeywords),
+      negative: toSortedList(negativeKeywords),
+    }
   },
 }
 

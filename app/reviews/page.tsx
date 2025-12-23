@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import dynamic from "next/dynamic"
 import Image from "next/image"
 import {
@@ -54,16 +54,18 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
-import type { Item, Review, ReviewStats, Category } from "@/types"
+import { DATE_RANGE_OPTIONS, type DateRange } from "@/lib/constants"
 import {
-  mockCategories,
-  mockItems,
-  mockReviews,
-  mockReviewStats,
-  DATE_RANGE_OPTIONS,
-  filterDataByDateRange,
-  type DateRange,
-} from "@/lib/mock-data"
+  getCategories,
+  getItems,
+  getReviews,
+  getKeywordStats,
+  analyzeReviews,
+  type CategoryData,
+  type ItemData,
+  type ReviewData,
+  type KeywordStats,
+} from "@/lib/api"
 
 // 워드클라우드 동적 import (SSR 비활성화)
 const ReactWordcloud = dynamic(() => import("react-wordcloud"), {
@@ -85,11 +87,42 @@ export default function ReviewsPage() {
   const [isGeneratingAI, setIsGeneratingAI] = useState(false)
   const [aiSummary, setAiSummary] = useState<string | null>(null)
 
+  // API 데이터 상태
+  const [categories, setCategories] = useState<CategoryData[]>([])
+  const [items, setItems] = useState<ItemData[]>([])
+  const [reviews, setReviews] = useState<ReviewData[]>([])
+  const [keywordStats, setKeywordStats] = useState<KeywordStats>({ positive: [], negative: [] })
+  const [isLoading, setIsLoading] = useState(true)
+
+  // 데이터 로드
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setIsLoading(true)
+        const [categoriesData, itemsData, reviewsData] = await Promise.all([
+          getCategories(),
+          getItems(),
+          getReviews({ limit: 1000 }),
+        ])
+
+        setCategories(categoriesData)
+        setItems(itemsData)
+        setReviews(reviewsData.reviews)
+      } catch (error) {
+        console.error("Failed to load data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadData()
+  }, [])
+
   // 카테고리로 필터링된 아이템
   const filteredItems = useMemo(() => {
-    if (categoryFilter === "all") return mockItems
-    return mockItems.filter(item => item.categoryId === categoryFilter)
-  }, [categoryFilter])
+    if (categoryFilter === "all") return items
+    return items.filter(item => item.category_id === categoryFilter)
+  }, [categoryFilter, items])
 
   // 아이템 선택 토글
   const toggleItem = (itemId: string) => {
@@ -106,13 +139,12 @@ export default function ReviewsPage() {
   }
 
   // 선택된 아이템 정보
-  const selectedItemsData = mockItems.filter(item => selectedItems.includes(item.id))
-
-  // 선택된 아이템의 리뷰 통계
-  const selectedStats = mockReviewStats.filter(stat => selectedItems.includes(stat.itemId))
+  const selectedItemsData = items.filter(item => selectedItems.includes(item.id))
 
   // 선택된 아이템의 리뷰
-  const selectedReviews = mockReviews.filter(review => selectedItems.includes(review.itemId))
+  const selectedReviews = useMemo(() => {
+    return reviews.filter(review => selectedItems.includes(review.item_id))
+  }, [reviews, selectedItems])
 
   // 감정 필터링된 리뷰
   const filteredReviews = useMemo(() => {
@@ -120,61 +152,95 @@ export default function ReviewsPage() {
     return selectedReviews.filter(review => review.sentiment === sentimentFilter)
   }, [selectedReviews, sentimentFilter])
 
+  // 선택된 아이템의 통계 계산
+  const selectedStats = useMemo(() => {
+    return selectedItems.map(itemId => {
+      const itemReviews = reviews.filter(r => r.item_id === itemId)
+      const total = itemReviews.length
+      const positive = itemReviews.filter(r => r.sentiment === "positive").length
+      const negative = itemReviews.filter(r => r.sentiment === "negative").length
+      const avgRating = total > 0
+        ? itemReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / total
+        : 0
+
+      return {
+        itemId,
+        totalReviews: total,
+        avgRating: Math.round(avgRating * 10) / 10,
+        positiveRate: total > 0 ? Math.round((positive / total) * 100) : 0,
+        negativeRate: total > 0 ? Math.round((negative / total) * 100) : 0,
+      }
+    })
+  }, [selectedItems, reviews])
+
   // 리뷰 추이 차트 데이터
   const trendChartData = useMemo(() => {
-    if (selectedStats.length === 0) return []
+    if (selectedItems.length === 0) return []
 
-    // 기간에 맞게 필터링된 데이터 사용
-    const filteredStats = selectedStats.map(stat => ({
-      ...stat,
-      dailyReviews: filterDataByDateRange(stat.dailyReviews, dateRange)
-    }))
+    const days = dateRange === "7d" ? 7 : dateRange === "1m" ? 30 : 90
+    const now = new Date()
+    const dates: string[] = []
 
-    // 모든 날짜 수집
-    const allDates = new Set<string>()
-    filteredStats.forEach(stat => {
-      stat.dailyReviews.forEach(d => allDates.add(d.date))
-    })
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now)
+      date.setDate(date.getDate() - i)
+      dates.push(date.toISOString().split("T")[0])
+    }
 
-    const sortedDates = Array.from(allDates).sort()
+    return dates.map(date => {
+      const dataPoint: Record<string, any> = { date: date.substring(5) }
 
-    return sortedDates.map(date => {
-      const dataPoint: Record<string, any> = { date: date.substring(5) } // MM-DD 형식
-
-      filteredStats.forEach((stat, index) => {
-        const item = mockItems.find(i => i.id === stat.itemId)
-        const dailyData = stat.dailyReviews.find(d => d.date === date)
-        dataPoint[item?.productName.substring(0, 10) || `아이템${index + 1}`] = dailyData?.count || 0
+      selectedItems.forEach((itemId) => {
+        const item = items.find(i => i.id === itemId)
+        const dayReviews = reviews.filter(r =>
+          r.item_id === itemId && r.date?.startsWith(date)
+        )
+        dataPoint[item?.product_name?.substring(0, 10) || itemId] = dayReviews.length
       })
 
       return dataPoint
     })
-  }, [selectedStats, dateRange])
+  }, [selectedItems, dateRange, items, reviews])
 
   // 워드클라우드 데이터 (긍정/부정)
   const keywordData = useMemo(() => {
     const positive: Record<string, number> = {}
     const negative: Record<string, number> = {}
 
-    selectedStats.forEach(stat => {
-      stat.topKeywords.forEach(kw => {
-        if (kw.sentiment === "positive") {
-          positive[kw.word] = (positive[kw.word] || 0) + kw.count
-        } else if (kw.sentiment === "negative") {
-          negative[kw.word] = (negative[kw.word] || 0) + kw.count
-        }
-      })
+    // 선택된 아이템의 리뷰에서 키워드 집계
+    selectedReviews.forEach(review => {
+      if (!review.keywords || review.keywords.length === 0) return
+
+      const target = review.sentiment === "positive"
+        ? positive
+        : review.sentiment === "negative"
+        ? negative
+        : null
+
+      if (target) {
+        review.keywords.forEach(kw => {
+          target[kw] = (target[kw] || 0) + 1
+        })
+      }
+    })
+
+    // API에서 가져온 키워드 통계도 병합
+    keywordStats.positive.forEach(kw => {
+      positive[kw.word] = (positive[kw.word] || 0) + kw.count
+    })
+    keywordStats.negative.forEach(kw => {
+      negative[kw.word] = (negative[kw.word] || 0) + kw.count
     })
 
     const positiveList = Object.entries(positive)
       .map(([word, count]) => ({ word, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10)
+      .slice(0, 15)
 
     const negativeList = Object.entries(negative)
       .map(([word, count]) => ({ word, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10)
+      .slice(0, 15)
 
     // 워드클라우드용 데이터 (text, value 형식)
     const positiveCloud = positiveList.map(kw => ({ text: kw.word, value: kw.count }))
@@ -186,7 +252,26 @@ export default function ReviewsPage() {
       positiveCloud,
       negativeCloud,
     }
-  }, [selectedStats])
+  }, [selectedReviews, keywordStats])
+
+  // 키워드 통계 로드
+  useEffect(() => {
+    if (selectedItems.length === 0) {
+      setKeywordStats({ positive: [], negative: [] })
+      return
+    }
+
+    const loadKeywords = async () => {
+      try {
+        const stats = await getKeywordStats(selectedItems, dateRange)
+        setKeywordStats(stats)
+      } catch (error) {
+        console.error("Failed to load keyword stats:", error)
+      }
+    }
+
+    loadKeywords()
+  }, [selectedItems, dateRange])
 
   // 워드클라우드 옵션 - 긍정 (녹색 계열)
   const positiveWordcloudOptions = useMemo(() => ({
@@ -224,13 +309,13 @@ export default function ReviewsPage() {
 
   // 비교 차트 데이터
   const comparisonData = selectedItemsData.map(item => {
-    const stat = mockReviewStats.find(s => s.itemId === item.id)
-    const category = mockCategories.find(c => c.id === item.categoryId)
+    const stat = selectedStats.find(s => s.itemId === item.id)
+    const category = categories.find(c => c.id === item.category_id)
     return {
-      name: item.productName.substring(0, 15) + "...",
-      fullName: item.productName,
-      리뷰수: item.reviewCount,
-      평균별점: item.avgRating,
+      name: (item.product_name || "").substring(0, 15) + "...",
+      fullName: item.product_name,
+      리뷰수: item.review_count || stat?.totalReviews || 0,
+      평균별점: item.avg_rating || stat?.avgRating || 0,
       긍정률: stat?.positiveRate || 0,
       color: category?.color || "#888",
     }
@@ -243,41 +328,74 @@ export default function ReviewsPage() {
     setIsGeneratingAI(true)
     setAiSummary(null)
 
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    try {
+      const result = await analyzeReviews({
+        itemIds: selectedItems,
+        type: "insights",
+        dateRange,
+      })
 
-    const itemNames = selectedItemsData.map(i => i.productName).join(", ")
-    const totalReviews = selectedItemsData.reduce((sum, i) => sum + i.reviewCount, 0)
-    const avgRating = (selectedItemsData.reduce((sum, i) => sum + i.avgRating, 0) / selectedItemsData.length).toFixed(1)
+      if ("overview" in result) {
+        const itemNames = selectedItemsData.map(i => i.product_name).join(", ")
+        const totalReviews = selectedStats.reduce((sum, s) => sum + s.totalReviews, 0)
+        const avgRating = selectedStats.length > 0
+          ? (selectedStats.reduce((sum, s) => sum + s.avgRating, 0) / selectedStats.length).toFixed(1)
+          : "0"
 
-    const mockSummary = `## 리뷰 분석 요약
+        const summary = `## 리뷰 분석 요약
 
 ### 분석 대상
-${selectedItemsData.map(i => `- ${i.productName} (${i.reviewCount.toLocaleString()}건)`).join("\n")}
+${selectedItemsData.map(i => `- ${i.product_name}`).join("\n")}
+
+### 개요
+${result.overview}
 
 ### 핵심 지표
 - **총 리뷰 수**: ${totalReviews.toLocaleString()}건
 - **평균 별점**: ${avgRating}점
-- **주요 긍정 키워드**: ${keywordData.positive.slice(0, 3).map(k => k.word).join(", ")}
-- **주요 개선점**: ${keywordData.negative.slice(0, 3).map(k => k.word).join(", ")}
+- **주요 긍정 키워드**: ${keywordData.positive.slice(0, 3).map(k => k.word).join(", ") || "분석 중"}
+- **주요 개선점**: ${keywordData.negative.slice(0, 3).map(k => k.word).join(", ") || "분석 중"}
 
-### 소비자 반응 분석
-대부분의 리뷰에서 맛과 품질에 대한 높은 만족도를 보이고 있습니다. 특히 "상쾌하다", "맛있다" 등의 긍정적 표현이 자주 등장합니다.
+### 긍정적 반응
+${result.pros.map(p => `- ${p}`).join("\n")}
 
-### 개선 제안
-1. 가격 경쟁력 강화 검토 필요
-2. 포장 개선을 통한 배송 품질 향상
-3. 다양한 맛 라인업 확대 고려
+### 개선 필요 사항
+${result.cons.map(c => `- ${c}`).join("\n")}
 
-### 경쟁사 대비 포지션
-${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 리뷰 수를 보유한 제품이 시장 선두 위치를 차지하고 있습니다." : "다른 제품과 비교하려면 여러 제품을 선택하세요."}
+### 권장 조치사항
+${result.actions.map(a => `- **${a.title}** (${a.priority}): ${a.detail}`).join("\n")}
 `
+        setAiSummary(summary)
+      }
+    } catch (error) {
+      console.error("AI analysis failed:", error)
 
-    setAiSummary(mockSummary)
-    setIsGeneratingAI(false)
+      // Fallback
+      const totalReviews = selectedStats.reduce((sum, s) => sum + s.totalReviews, 0)
+      const avgRating = selectedStats.length > 0
+        ? (selectedStats.reduce((sum, s) => sum + s.avgRating, 0) / selectedStats.length).toFixed(1)
+        : "0"
+
+      const fallbackSummary = `## 리뷰 분석 요약
+
+### 분석 대상
+${selectedItemsData.map(i => `- ${i.product_name}`).join("\n")}
+
+### 핵심 지표
+- **총 리뷰 수**: ${totalReviews.toLocaleString()}건
+- **평균 별점**: ${avgRating}점
+- **평균 긍정률**: ${selectedStats.length > 0 ? Math.round(selectedStats.reduce((sum, s) => sum + s.positiveRate, 0) / selectedStats.length) : 0}%
+
+*참고: AI 분석 서비스에 연결할 수 없어 기본 통계만 표시됩니다.*
+`
+      setAiSummary(fallbackSummary)
+    } finally {
+      setIsGeneratingAI(false)
+    }
   }
 
   // 감정 아이콘
-  const SentimentIcon = ({ sentiment }: { sentiment: string }) => {
+  const SentimentIcon = ({ sentiment }: { sentiment: string | null }) => {
     switch (sentiment) {
       case "positive":
         return <IconMoodHappy className="h-4 w-4 text-green-500" />
@@ -289,6 +407,16 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
   }
 
   const chartColors = ["#4ECDC4", "#FF6B6B", "#45B7D1", "#96CEB4"]
+
+  if (isLoading) {
+    return (
+      <PageLayout>
+        <div className="flex items-center justify-center h-96">
+          <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </PageLayout>
+    )
+  }
 
   return (
     <PageLayout>
@@ -329,12 +457,12 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">전체 카테고리</SelectItem>
-                {mockCategories.map((cat) => (
+                {categories.map((cat) => (
                   <SelectItem key={cat.id} value={cat.id}>
                     <div className="flex items-center gap-2">
                       <div
                         className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: cat.color }}
+                        style={{ backgroundColor: cat.color || "#888" }}
                       />
                       {cat.name}
                     </div>
@@ -346,53 +474,63 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
           <CardContent>
             <ScrollArea className="h-[400px] pr-4">
               <div className="space-y-2">
-                {filteredItems.map((item) => {
-                  const isSelected = selectedItems.includes(item.id)
-                  const category = mockCategories.find(c => c.id === item.categoryId)
-                  const isDisabled = !isSelected && selectedItems.length >= MAX_SELECTION
+                {filteredItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    등록된 아이템이 없습니다
+                  </p>
+                ) : (
+                  filteredItems.map((item) => {
+                    const isSelected = selectedItems.includes(item.id)
+                    const category = categories.find(c => c.id === item.category_id)
+                    const isDisabled = !isSelected && selectedItems.length >= MAX_SELECTION
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${
-                        isSelected ? "border-primary bg-muted/30" : ""
-                      } ${isDisabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"}`}
-                      onClick={() => !isDisabled && toggleItem(item.id)}
-                    >
-                      <Checkbox
-                        checked={isSelected}
-                        disabled={isDisabled}
-                        className="mt-1"
-                      />
-                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-muted">
-                        <Image
-                          src={item.productImage}
-                          alt={item.productName}
-                          fill
-                          className="object-cover"
-                          unoptimized
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${
+                          isSelected ? "border-primary bg-muted/30" : ""
+                        } ${isDisabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"}`}
+                        onClick={() => !isDisabled && toggleItem(item.id)}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          disabled={isDisabled}
+                          className="mt-1"
                         />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium line-clamp-2">{item.productName}</p>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                          <Badge
-                            variant="outline"
-                            className="text-xs"
-                            style={{ borderColor: category?.color }}
-                          >
-                            {category?.name}
-                          </Badge>
-                          <span className="flex items-center gap-0.5">
-                            <IconStar className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            {item.avgRating}
-                          </span>
-                          <span>{item.reviewCount.toLocaleString()}건</span>
+                        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-muted">
+                          {item.product_image && (
+                            <Image
+                              src={item.product_image}
+                              alt={item.product_name || ""}
+                              fill
+                              className="object-cover"
+                              unoptimized
+                            />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium line-clamp-2">{item.product_name}</p>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                            {category && (
+                              <Badge
+                                variant="outline"
+                                className="text-xs"
+                                style={{ borderColor: category.color || undefined }}
+                              >
+                                {category.name}
+                              </Badge>
+                            )}
+                            <span className="flex items-center gap-0.5">
+                              <IconStar className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              {item.avg_rating || 0}
+                            </span>
+                            <span>{(item.review_count || 0).toLocaleString()}건</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })
+                )}
               </div>
             </ScrollArea>
 
@@ -430,25 +568,27 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
             <>
               {/* 선택된 아이템 요약 */}
               <div className="flex flex-wrap gap-2">
-                {selectedItemsData.map((item, index) => {
-                  const category = mockCategories.find(c => c.id === item.categoryId)
+                {selectedItemsData.map((item) => {
+                  const category = categories.find(c => c.id === item.category_id)
                   return (
                     <Badge
                       key={item.id}
                       variant="secondary"
                       className="flex items-center gap-2 py-1.5 pl-1.5"
-                      style={{ borderLeft: `3px solid ${category?.color}` }}
+                      style={{ borderLeft: `3px solid ${category?.color || "#888"}` }}
                     >
                       <div className="relative h-6 w-6 overflow-hidden rounded">
-                        <Image
-                          src={item.productImage}
-                          alt={item.productName}
-                          fill
-                          className="object-cover"
-                          unoptimized
-                        />
+                        {item.product_image && (
+                          <Image
+                            src={item.product_image}
+                            alt={item.product_name || ""}
+                            fill
+                            className="object-cover"
+                            unoptimized
+                          />
+                        )}
                       </div>
-                      <span className="max-w-[150px] truncate">{item.productName}</span>
+                      <span className="max-w-[150px] truncate">{item.product_name}</span>
                       <button
                         onClick={() => toggleItem(item.id)}
                         className="ml-1 rounded-full p-0.5 hover:bg-muted"
@@ -483,7 +623,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">
-                      {selectedItemsData.reduce((sum, i) => sum + i.reviewCount, 0).toLocaleString()}건
+                      {selectedStats.reduce((sum, s) => sum + s.totalReviews, 0).toLocaleString()}건
                     </div>
                   </CardContent>
                 </Card>
@@ -498,7 +638,9 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold">
-                      {(selectedItemsData.reduce((sum, i) => sum + i.avgRating, 0) / selectedItemsData.length).toFixed(1)}점
+                      {selectedStats.length > 0
+                        ? (selectedStats.reduce((sum, s) => sum + s.avgRating, 0) / selectedStats.length).toFixed(1)
+                        : "0.0"}점
                     </div>
                   </CardContent>
                 </Card>
@@ -556,7 +698,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                               <Area
                                 key={item.id}
                                 type="monotone"
-                                dataKey={item.productName.substring(0, 10)}
+                                dataKey={(item.product_name || "").substring(0, 10)}
                                 stackId="1"
                                 stroke={chartColors[index % chartColors.length]}
                                 fill={chartColors[index % chartColors.length]}
@@ -652,7 +794,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                               variant="outline"
                               className="border-green-200 bg-green-50 text-green-700"
                               style={{
-                                fontSize: `${Math.max(0.75, 1 - index * 0.05)}rem`,
+                                fontSize: `${Math.max(0.75, 1 - index * 0.03)}rem`,
                                 padding: `${Math.max(4, 8 - index)}px ${Math.max(8, 12 - index)}px`,
                               }}
                             >
@@ -660,7 +802,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                             </Badge>
                           ))}
                           {keywordData.positive.length === 0 && (
-                            <p className="text-sm text-muted-foreground">키워드 데이터가 없습니다</p>
+                            <p className="text-sm text-muted-foreground">키워드 데이터가 없습니다. AI 분석을 실행해주세요.</p>
                           )}
                         </div>
                       </CardContent>
@@ -690,7 +832,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                               variant="outline"
                               className="border-red-200 bg-red-50 text-red-700"
                               style={{
-                                fontSize: `${Math.max(0.75, 1 - index * 0.05)}rem`,
+                                fontSize: `${Math.max(0.75, 1 - index * 0.03)}rem`,
                                 padding: `${Math.max(4, 8 - index)}px ${Math.max(8, 12 - index)}px`,
                               }}
                             >
@@ -698,7 +840,7 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                             </Badge>
                           ))}
                           {keywordData.negative.length === 0 && (
-                            <p className="text-sm text-muted-foreground">키워드 데이터가 없습니다</p>
+                            <p className="text-sm text-muted-foreground">키워드 데이터가 없습니다. AI 분석을 실행해주세요.</p>
                           )}
                         </div>
                       </CardContent>
@@ -744,34 +886,36 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                                 </TableCell>
                               </TableRow>
                             ) : (
-                              filteredReviews.map((review) => (
+                              filteredReviews.slice(0, 50).map((review) => (
                                 <TableRow key={review.id}>
                                   <TableCell className="text-sm text-muted-foreground">
                                     <div className="flex items-center gap-1">
                                       <IconCalendar className="h-3 w-3" />
-                                      {review.date}
+                                      {review.date || "-"}
                                     </div>
                                   </TableCell>
                                   <TableCell>
                                     <div className="flex items-center gap-1">
                                       <IconStar className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                                      {review.rating}
+                                      {review.rating || "-"}
                                     </div>
                                   </TableCell>
                                   <TableCell className="max-w-md">
-                                    <p className="line-clamp-2">{review.content}</p>
-                                    <div className="mt-1 flex flex-wrap gap-1">
-                                      {review.keywords.slice(0, 3).map((kw) => (
-                                        <Badge key={kw} variant="secondary" className="text-xs">
-                                          {kw}
-                                        </Badge>
-                                      ))}
-                                    </div>
+                                    <p className="line-clamp-2">{review.content || "-"}</p>
+                                    {review.keywords && review.keywords.length > 0 && (
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {review.keywords.slice(0, 3).map((kw) => (
+                                          <Badge key={kw} variant="secondary" className="text-xs">
+                                            {kw}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    )}
                                   </TableCell>
                                   <TableCell>
                                     <div className="flex items-center gap-1 text-sm">
                                       <IconUser className="h-3 w-3" />
-                                      {review.author}
+                                      {review.author || "-"}
                                     </div>
                                   </TableCell>
                                   <TableCell>
@@ -811,6 +955,9 @@ ${selectedItems.length > 1 ? "선택된 제품들 중 가장 높은 평점과 �
                         }
                         if (line.match(/^\d+\./)) {
                           return <li key={i} className="ml-4">{line.replace(/^\d+\.\s*/, "")}</li>
+                        }
+                        if (line.startsWith("*")) {
+                          return <p key={i} className="text-muted-foreground italic">{line.replace(/^\*/, "").replace(/\*$/, "")}</p>
                         }
                         return line ? <p key={i}>{line}</p> : null
                       })}

@@ -1,8 +1,27 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient, useLocalDB } from "@/lib/supabase"
 import { localDB } from "@/lib/local-db"
+import { crawlCache } from "@/lib/utils/cache"
+import { crawlerRateLimiter } from "@/lib/utils/rate-limiter"
 
 const CRAWLER_API_URL = process.env.CRAWLER_API_URL || "http://localhost:3001"
+const CRAWLER_TIMEOUT = 120000 // 2분 (크롤링은 시간이 오래 걸릴 수 있음)
+
+// 타임아웃이 있는 fetch 헬퍼
+async function fetchWithTimeout(url: string, options: RequestInit, timeout: number): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    return response
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
 
 // POST /api/items/[id]/crawl - 아이템 리뷰 크롤링 실행
 export async function POST(
@@ -11,6 +30,24 @@ export async function POST(
 ) {
   try {
     const { id } = await params
+    const cacheKey = `crawl:${id}`
+
+    // 캐시된 결과 확인 (30분 내 크롤링 결과가 있으면 재사용)
+    const cached = crawlCache.get(cacheKey)
+    if (cached) {
+      console.log(`[Cache] Using cached crawl results for item: ${id}`)
+      return NextResponse.json({
+        success: true,
+        crawled: cached.reviews.length,
+        inserted: 0,
+        skipped: cached.reviews.length,
+        cached: true,
+        cachedAt: cached.crawledAt,
+      })
+    }
+
+    // Rate Limiter 적용
+    await crawlerRateLimiter.acquire()
 
     // 로컬 DB 모드
     if (useLocalDB) {
@@ -21,15 +58,19 @@ export async function POST(
 
       // 외부 크롤러 API 호출
       console.log(`[LocalDB] Crawling item: ${item.product_name || item.url}`)
-      const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: item.url,
-          platform: item.platform,
-          itemId: id,
-        }),
-      })
+      const crawlerResponse = await fetchWithTimeout(
+        `${CRAWLER_API_URL}/crawl/reviews`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: item.url,
+            platform: item.platform,
+            itemId: id,
+          }),
+        },
+        CRAWLER_TIMEOUT
+      )
 
       if (!crawlerResponse.ok) {
         const errorText = await crawlerResponse.text()
@@ -48,6 +89,12 @@ export async function POST(
 
       // 마지막 크롤링 시간 업데이트
       await localDB.items.updateLastCrawled(id)
+
+      // 캐시에 저장
+      crawlCache.set(cacheKey, {
+        reviews: crawledReviews,
+        crawledAt: new Date().toISOString(),
+      })
 
       console.log(`[LocalDB] Saved: ${inserted} inserted, ${skipped} skipped`)
 
@@ -78,17 +125,19 @@ export async function POST(
     }
 
     // 외부 크롤러 API 호출
-    const crawlerResponse = await fetch(`${CRAWLER_API_URL}/crawl/reviews`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const crawlerResponse = await fetchWithTimeout(
+      `${CRAWLER_API_URL}/crawl/reviews`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: item.url,
+          platform: item.platform,
+          itemId: id,
+        }),
       },
-      body: JSON.stringify({
-        url: item.url,
-        platform: item.platform,
-        itemId: id,
-      }),
-    })
+      CRAWLER_TIMEOUT
+    )
 
     if (!crawlerResponse.ok) {
       const errorData = await crawlerResponse.json().catch(() => ({}))
@@ -139,6 +188,12 @@ export async function POST(
       .update({ last_crawled_at: new Date().toISOString() })
       .eq("id", id)
 
+    // 캐시에 저장
+    crawlCache.set(cacheKey, {
+      reviews: crawledReviews,
+      crawledAt: new Date().toISOString(),
+    })
+
     return NextResponse.json({
       success: true,
       crawled: crawledReviews.length,
@@ -147,6 +202,9 @@ export async function POST(
     })
   } catch (error) {
     console.error("Crawl API error:", error)
+    if (error instanceof Error && error.name === "AbortError") {
+      return NextResponse.json({ error: "Crawler request timeout" }, { status: 504 })
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

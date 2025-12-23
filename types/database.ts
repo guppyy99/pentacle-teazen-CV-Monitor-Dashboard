@@ -77,6 +77,7 @@ export interface Database {
           images: string[] | null
           date: string | null
           sentiment: string | null
+          keywords: string[] | null
           crawled_at: string
         }
         Insert: {
@@ -88,6 +89,7 @@ export interface Database {
           images?: string[] | null
           date?: string | null
           sentiment?: string | null
+          keywords?: string[] | null
           crawled_at?: string
         }
         Update: {
@@ -99,6 +101,7 @@ export interface Database {
           images?: string[] | null
           date?: string | null
           sentiment?: string | null
+          keywords?: string[] | null
           crawled_at?: string
         }
       }
