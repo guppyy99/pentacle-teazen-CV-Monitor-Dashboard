@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/select"
 
 import type { CategoryStats } from "@/types"
-import { DATE_RANGE_OPTIONS, type DateRange } from "@/lib/mock-data"
+import { DATE_RANGE_OPTIONS, type DateRange } from "@/lib/constants"
 import {
   getCategories,
   getItems,

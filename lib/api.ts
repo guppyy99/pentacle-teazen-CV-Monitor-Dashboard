@@ -150,6 +150,7 @@ export interface ReviewData {
   images: string[] | null
   date: string | null
   sentiment: string | null
+  keywords: string[] | null
   crawled_at: string
   items?: {
     id: string
@@ -251,4 +252,17 @@ export async function getCachedAnalysis(itemId: string): Promise<CachedAnalysis 
     `/api/analyze?itemId=${itemId}`
   )
   return "analysis" in result ? result.analysis : result
+}
+
+// 키워드 통계 조회
+export interface KeywordStats {
+  positive: { word: string; count: number }[]
+  negative: { word: string; count: number }[]
+}
+
+export async function getKeywordStats(itemIds: string[], dateRange?: string): Promise<KeywordStats> {
+  return fetchAPI("/api/analyze", {
+    method: "POST",
+    body: JSON.stringify({ itemIds, type: "keywords", dateRange }),
+  })
 }

@@ -100,21 +100,25 @@ export async function POST(request: NextRequest) {
         console.log(`[Analyze] Tagging ${untaggedReviews.length} reviews...`)
         const tagResults = await tagReviewsBatch(untaggedReviews)
 
-        // DB 업데이트
+        // DB 업데이트 (sentiment + keywords)
         if (useLocalDB) {
-          const db = await import("@/lib/local-db")
-          const localReviews = db.localDB.reviews
-
-          // 로컬 DB의 리뷰 업데이트는 현재 지원하지 않음
-          // 대신 결과만 반환
-          console.log(`[Analyze] Tagged ${tagResults.length} reviews (local DB - not persisted)`)
+          const updates = tagResults.map((result) => ({
+            id: result.reviewId,
+            sentiment: result.sentiment as "positive" | "negative" | "neutral",
+            keywords: result.keywords || [],
+          }))
+          const updated = await localDB.reviews.bulkUpdateAnalysis(updates)
+          console.log(`[Analyze] Tagged and saved ${updated} reviews to local DB`)
         } else {
           const supabase = createServerClient()
           if (supabase) {
             for (const result of tagResults) {
               await supabase
                 .from("reviews")
-                .update({ sentiment: result.sentiment })
+                .update({
+                  sentiment: result.sentiment,
+                  keywords: result.keywords || [],
+                })
                 .eq("id", result.reviewId)
             }
           }
@@ -201,6 +205,15 @@ export async function POST(request: NextRequest) {
       }
 
       case "keywords": {
+        // 먼저 DB에 저장된 키워드 통계 확인
+        if (useLocalDB) {
+          const stats = await localDB.reviews.getKeywordStats(itemIds)
+          if (stats.positive.length > 0 || stats.negative.length > 0) {
+            return NextResponse.json(stats)
+          }
+        }
+
+        // DB에 키워드가 없으면 GPT로 추출
         const reviewsForKeywords = reviews
           .filter((r) => r.content && r.sentiment)
           .map((r) => ({
